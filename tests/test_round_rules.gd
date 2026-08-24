@@ -3,6 +3,11 @@ extends RefCounted
 const CarController = preload("res://scripts/car/car_controller.gd")
 const PlayerRoundState = preload("res://scripts/domain/player_round_state.gd")
 const SplitScreenManager = preload("res://scripts/ui/split_screen_manager.gd")
+const TrackLayout = preload("res://scripts/domain/track_layout.gd")
+const TrackManager = preload("res://scripts/track/track_manager.gd")
+const ProgressTracker = preload("res://scripts/domain/progress_tracker.gd")
+const RaceCheckpoint = preload("res://scripts/track/race_checkpoint.gd")
+const RespawnPoint = preload("res://scripts/track/respawn_point.gd")
 
 func run() -> bool:
 	var all_passed := true
@@ -17,7 +22,193 @@ func run() -> bool:
 	all_passed = test_active_boost_increases_and_preserves_coasting_speed() and all_passed
 	all_passed = test_shared_car_scene_has_body_collision_and_player_color() and all_passed
 	all_passed = test_split_screen_binds_two_targets_to_shared_world_viewports() and all_passed
+	all_passed = test_piece_gates_reject_skips_duplicates_and_reverse_progress() and all_passed
+	all_passed = test_global_progress_uses_only_current_logical_piece_distance() and all_passed
+	all_passed = test_checkpoint_first_claim_resets_each_round() and all_passed
+	all_passed = test_real_triggers_accept_only_forward_car_crossings() and all_passed
+	all_passed = test_runtime_output_gates_advance_only_to_an_existing_next_piece() and all_passed
+	all_passed = test_initial_respawn_and_runtime_points_have_stable_identity() and all_passed
+	all_passed = test_survivor_respawns_dead_opponent_at_opponents_saved_transform() and all_passed
+	all_passed = test_all_dead_recovery_excludes_eliminated_players() and all_passed
 	return all_passed
+
+func test_piece_gates_reject_skips_duplicates_and_reverse_progress() -> bool:
+	var fixture := _create_progress_fixture(3)
+	var tracker = fixture["tracker"]
+	return (
+		_expect(not tracker.record_piece_gate(1, 2), "A player must not skip directly to a later logical piece.")
+		and _expect(tracker.record_piece_gate(1, 1), "The immediate next logical piece must be accepted.")
+		and _expect(not tracker.record_piece_gate(1, 1), "A duplicate piece gate must be ignored.")
+		and _expect(not tracker.record_piece_gate(1, 0), "A reverse piece gate must be ignored.")
+		and _expect(is_equal_approx(tracker.global_progress(1, 4.0), 24.0), "Rejected gates must not decrease or skip the player's logical progress.")
+	)
+
+func test_global_progress_uses_only_current_logical_piece_distance() -> bool:
+	var fixture := _create_progress_fixture(3)
+	var tracker = fixture["tracker"]
+	tracker.record_piece_gate(1, 1)
+	return (
+		_expect(is_equal_approx(tracker.global_progress(1, 3.0), 23.0), "Local path distance must be added to the current piece's accumulated meter length.")
+		and _expect(is_equal_approx(tracker.global_progress(1, 999.0), 40.0), "Local distance must clamp to the current piece instead of projecting onto a nearby later piece.")
+	)
+
+func test_checkpoint_first_claim_resets_each_round() -> bool:
+	var fixture := _create_progress_fixture(2)
+	var tracker = fixture["tracker"]
+	var first_claim: bool = tracker.try_claim_checkpoint(1, "checkpoint_1", 1)
+	var duplicate_claim: bool = tracker.try_claim_checkpoint(2, "checkpoint_1", 1)
+	var first_respawn: bool = tracker.try_activate_respawn(1, "respawn_0", 0)
+	var duplicate_respawn: bool = tracker.try_activate_respawn(1, "respawn_0", 0)
+	tracker.record_piece_gate(1, 1)
+	tracker.reset_round_claims()
+	var next_round_claim: bool = tracker.try_claim_checkpoint(2, "checkpoint_1", 1)
+	var next_round_respawn: bool = tracker.try_activate_respawn(1, "respawn_0", 0)
+	return (
+		_expect(first_claim, "The first valid player must claim a checkpoint.")
+		and _expect(not duplicate_claim, "A checkpoint must award only one first claim per round.")
+		and _expect(next_round_claim, "Resetting round claims must rearm persistent checkpoint nodes.")
+		and _expect(first_respawn and not duplicate_respawn and next_round_respawn, "Round reset must clear each player's respawn activation set.")
+		and _expect(tracker.current_piece_indexes[1] == 0, "A new race must reset each player's logical progress to TrackStart.")
+	)
+
+func test_real_triggers_accept_only_forward_car_crossings() -> bool:
+	var fixture := _create_progress_fixture(2)
+	var tracker = fixture["tracker"]
+	var scene_tree := Engine.get_main_loop() as SceneTree
+	var trigger_root := Node3D.new()
+	scene_tree.root.add_child(trigger_root)
+	var checkpoint = RaceCheckpoint.new()
+	var respawn = RespawnPoint.new()
+	trigger_root.add_child(checkpoint)
+	trigger_root.add_child(respawn)
+	checkpoint.configure("checkpoint_0", 0, tracker)
+	respawn.configure("respawn_0", 0, tracker, Transform3D(Basis.IDENTITY, Vector3(0.0, 0.5, -2.0)))
+	var car := CarController.new()
+	car.configure(1, "p1")
+	car.velocity = Vector3(0.0, 0.0, 5.0)
+	var reverse_checkpoint: bool = checkpoint.handle_body_crossing(car)
+	var reverse_respawn: bool = respawn.handle_body_crossing(car)
+	car.velocity = Vector3(0.0, 0.0, -5.0)
+	var forward_checkpoint: bool = checkpoint.handle_body_crossing(car)
+	var forward_respawn: bool = respawn.handle_body_crossing(car)
+	var repeated_respawn: bool = respawn.handle_body_crossing(car)
+	car.free()
+	scene_tree.root.remove_child(trigger_root)
+	trigger_root.free()
+	return (
+		_expect(not reverse_checkpoint and not reverse_respawn, "Reverse crossings of real Area3D triggers must be ignored.")
+		and _expect(forward_checkpoint and forward_respawn, "Forward crossings must reach checkpoint and respawn domain rules.")
+		and _expect(not repeated_respawn, "A respawn point must activate at most once per player per round.")
+	)
+
+func test_initial_respawn_and_runtime_points_have_stable_identity() -> bool:
+	var scene_tree := Engine.get_main_loop() as SceneTree
+	var manager = TrackManager.new()
+	scene_tree.root.add_child(manager)
+	manager.create_initial_track()
+	var initial = manager.get_node_or_null("InitialRespawnPoint")
+	var option = manager.layout.get_valid_options()[0]
+	manager.apply_extension(option)
+	var checkpoint = manager.get_node_or_null("Pieces/TrackPiece_1/SafeRespawnZone/RaceCheckpoint")
+	var respawn = manager.get_node_or_null("Pieces/TrackPiece_1/SafeRespawnZone/RespawnPoint")
+	var progress_fixture := _create_progress_fixture(2)
+	manager.configure_progress_tracker(progress_fixture["tracker"])
+	progress_fixture["players"][1].last_safe_respawn = Transform3D(Basis.IDENTITY, Vector3(9.0, 0.0, 9.0))
+	progress_fixture["tracker"].reset_round_claims()
+	var passed := (
+		_expect(initial is RespawnPoint and initial.point_id == "respawn_initial" and initial.piece_index == 0, "TrackStart must expose one scripted initial safe respawn with stable identity.")
+		and _expect(checkpoint is RaceCheckpoint and checkpoint.checkpoint_id == "checkpoint_1", "Checkpoint nodes must use scripted stable piece-index ids.")
+		and _expect(respawn is RespawnPoint and respawn.point_id == "respawn_1", "Respawn nodes must persist with stable piece-index ids.")
+		and _expect(checkpoint.progress_tracker == progress_fixture["tracker"] and respawn.progress_tracker == progress_fixture["tracker"], "Configuring the manager must bind every persistent nested trigger to the tracker.")
+		and _expect(progress_fixture["players"][1].last_safe_respawn == initial.safe_transform, "Every new race must restore TrackStart as the player's initial safe respawn.")
+	)
+	scene_tree.root.remove_child(manager)
+	manager.free()
+	return passed
+
+func test_runtime_output_gates_advance_only_to_an_existing_next_piece() -> bool:
+	var scene_tree := Engine.get_main_loop() as SceneTree
+	var manager = TrackManager.new()
+	scene_tree.root.add_child(manager)
+	manager.create_initial_track()
+	manager.apply_extension(manager.layout.get_valid_options()[0])
+	var players := {1: PlayerRoundState.new(), 2: PlayerRoundState.new()}
+	players[1].reset_for_round()
+	players[2].reset_for_round()
+	var tracker = ProgressTracker.new(manager.layout, players)
+	manager.configure_progress_tracker(tracker)
+	var car := CarController.new()
+	car.configure(1, "p1")
+	manager.add_child(car)
+	car.velocity = Vector3(0.0, 0.0, -5.0)
+	var first_gate: Area3D = manager.get_node("Pieces/TrackPiece_0/OutputGate")
+	first_gate.body_entered.emit(car)
+	var advanced_once: bool = tracker.current_piece_indexes[1] == 1
+	car.velocity = Vector3(0.0, 0.0, 5.0)
+	first_gate.body_entered.emit(car)
+	var reverse_ignored: bool = tracker.current_piece_indexes[1] == 1
+	car.velocity = Vector3(0.0, 0.0, -5.0)
+	var last_gate: Area3D = manager.get_node("Pieces/TrackPiece_1/OutputGate")
+	last_gate.body_entered.emit(car)
+	var nonexistent_next_ignored: bool = tracker.current_piece_indexes[1] == 1
+	scene_tree.root.remove_child(manager)
+	manager.free()
+	return (
+		_expect(advanced_once, "A forward output gate crossing must enter exactly the existing immediate next piece.")
+		and _expect(reverse_ignored, "A reverse output gate crossing must not change logical progress.")
+		and _expect(nonexistent_next_ignored, "The final output gate must not advance beyond the current layout chain.")
+	)
+
+func test_survivor_respawns_dead_opponent_at_opponents_saved_transform() -> bool:
+	var fixture := _create_progress_fixture(2)
+	var tracker = fixture["tracker"]
+	var players: Dictionary = fixture["players"]
+	var p1_safe := Transform3D(Basis.IDENTITY, Vector3(2.0, 0.0, -4.0))
+	var p2_safe := Transform3D(Basis.IDENTITY, Vector3(-3.0, 0.0, -7.0))
+	players[1].last_safe_respawn = p1_safe
+	players[2].last_safe_respawn = p2_safe
+	players[2].lose_life()
+	var requests: Array = []
+	tracker.respawn_requested.connect(func(player_id: int, safe_transform: Transform3D): requests.append([player_id, safe_transform]))
+	var activated: bool = tracker.try_activate_respawn(1, "respawn_0", 0, p1_safe)
+	return (
+		_expect(activated, "A live player's first valid respawn crossing must activate.")
+		and _expect(requests == [[2, p2_safe]], "A survivor must request the dead opponent's own saved transform, never the activator's point.")
+		and _expect(not players[2].is_dead, "Issuing a valid respawn must restore the opponent's round state.")
+	)
+
+func test_all_dead_recovery_excludes_eliminated_players() -> bool:
+	var fixture := _create_progress_fixture(2)
+	var tracker = fixture["tracker"]
+	var players: Dictionary = fixture["players"]
+	var p1_safe := Transform3D(Basis.IDENTITY, Vector3(1.0, 0.0, -1.0))
+	var p2_safe := Transform3D(Basis.IDENTITY, Vector3(2.0, 0.0, -2.0))
+	players[1].last_safe_respawn = p1_safe
+	players[2].last_safe_respawn = p2_safe
+	players[1].lose_life()
+	for life in range(3):
+		if life > 0:
+			players[2].respawn(p2_safe)
+		players[2].lose_life()
+	var requests: Array = []
+	tracker.respawn_requested.connect(func(player_id: int, safe_transform: Transform3D): requests.append([player_id, safe_transform]))
+	var recovered: bool = tracker.resolve_all_dead()
+	return (
+		_expect(recovered, "All-dead resolution must recover every non-eliminated dead player.")
+		and _expect(requests == [[1, p1_safe]], "All-dead recovery must use each eligible player's saved transform and exclude eliminated players.")
+		and _expect(not players[1].is_dead and players[2].is_eliminated, "Recovery must revive eligible state without reviving eliminated state.")
+	)
+
+func _create_progress_fixture(piece_count: int) -> Dictionary:
+	var layout = TrackLayout.with_initial_straight()
+	while layout.pieces.size() < piece_count:
+		var options = layout.get_valid_options()
+		var straight = options.filter(func(option): return option.variant_id == "straight")[0]
+		layout.append(straight)
+	var players := {1: PlayerRoundState.new(), 2: PlayerRoundState.new()}
+	players[1].reset_for_round()
+	players[2].reset_for_round()
+	return {"tracker": ProgressTracker.new(layout, players), "players": players}
 
 func test_one_boost_charge_is_consumed_once_per_round() -> bool:
 	var player = PlayerRoundState.new()
