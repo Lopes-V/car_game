@@ -51,6 +51,9 @@ func run() -> bool:
 		and test_duplicate_finish_keeps_first_recorded_time()
 		and test_race_ends_at_deadline_and_enters_results()
 		and test_target_score_is_evaluated_only_after_results()
+		and test_equal_target_scores_remain_unresolved()
+		and test_repeated_begin_racing_keeps_original_deadline()
+		and test_finish_after_deadline_is_ignored()
 		and test_phase_changed_emits_only_for_real_transitions()
 		and test_begin_round_resets_round_state()
 	)
@@ -91,6 +94,27 @@ func test_target_score_is_evaluated_only_after_results() -> bool:
 	return (
 		_expect(state.resolve_match({1: 19, 2: 20}) == 2, "The higher target-reaching score must win after RESULTS.")
 		and _expect(state.resolve_match({1: 19, 2: 18}) == 0, "No match must resolve when neither score reaches target.")
+	)
+
+func test_equal_target_scores_remain_unresolved() -> bool:
+	var state := State.new()
+	state.phase = State.Phase.RESULTS
+	return _expect(state.resolve_match({1: 20, 2: 20}) == 0, "Equal target-reaching scores must remain unresolved.")
+
+func test_repeated_begin_racing_keeps_original_deadline() -> bool:
+	var state := State.new()
+	state.begin_racing(0.0)
+	state.begin_racing(1.0)
+	return _expect(is_equal_approx(state.race_end_time, 120.0), "Repeated begin_racing must not move the hard deadline.")
+
+func test_finish_after_deadline_is_ignored() -> bool:
+	var state := State.new()
+	state.begin_racing(0.0)
+	state.record_finish(1, 120.1)
+	return (
+		_expect(state.finish_times.is_empty(), "A finish after the deadline must not be recorded.")
+		and _expect(state.phase == State.Phase.RACING, "A late finish must not enter FINAL_WINDOW.")
+		and _expect(is_equal_approx(state.race_end_time, 120.0), "A late finish must not change the hard deadline.")
 	)
 
 func test_phase_changed_emits_only_for_real_transitions() -> bool:

@@ -26,11 +26,15 @@ func begin_round(next_round_number: int) -> void:
 	phase = Phase.BUILD_SECRET
 
 func begin_racing(now_seconds: float) -> void:
+	if phase == Phase.RACING:
+		return
 	phase = Phase.RACING
 	race_end_time = now_seconds + Constants.ROUND_TIME_SECONDS
 
 func record_finish(player_id: int, now_seconds: float) -> void:
 	if phase != Phase.RACING and phase != Phase.FINAL_WINDOW:
+		return
+	if now_seconds > race_end_time:
 		return
 	if player_id in finish_times:
 		return
@@ -58,4 +62,6 @@ func resolve_match(scores: Dictionary) -> int:
 		if score >= Constants.TARGET_SCORE and score > highest_score:
 			highest_score = score
 			winner_id = player_id
+		elif score >= Constants.TARGET_SCORE and score == highest_score:
+			winner_id = 0
 	return winner_id
