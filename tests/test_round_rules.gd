@@ -12,6 +12,10 @@ func run() -> bool:
 	all_passed = test_car_reads_only_its_configured_input_prefix() and all_passed
 	all_passed = test_car_rejects_input_while_disabled_or_dead() and all_passed
 	all_passed = test_boost_requires_a_fresh_enabled_activation() and all_passed
+	all_passed = test_invalid_control_state_clears_active_boost() and all_passed
+	all_passed = test_controller_round_reset_clears_runtime_and_domain_state() and all_passed
+	all_passed = test_active_boost_increases_and_preserves_coasting_speed() and all_passed
+	all_passed = test_shared_car_scene_has_body_collision_and_player_color() and all_passed
 	all_passed = test_split_screen_binds_two_targets_to_shared_world_viewports() and all_passed
 	return all_passed
 
@@ -132,6 +136,114 @@ func test_boost_requires_a_fresh_enabled_activation() -> bool:
 		and _expect(fresh_press_consumed, "A fresh enabled boost activation must consume the single charge.")
 		and _expect(held_press_did_not_restart, "Holding boost must not restart its duration.")
 	)
+
+func test_invalid_control_state_clears_active_boost() -> bool:
+	var fixture := _create_car_fixture(1, "p1")
+	var car = fixture["car"]
+	var state = fixture["state"]
+	Input.action_press("p1_boost")
+	car._physics_process(0.1)
+	var activated_before_death: bool = car.boost_time_remaining > 0.0
+	state.lose_life()
+	car._physics_process(0.1)
+	var cleared_on_death: bool = is_zero_approx(car.boost_time_remaining)
+	state.respawn(Transform3D.IDENTITY)
+	car._physics_process(0.1)
+	var stayed_cleared_after_respawn: bool = is_zero_approx(car.boost_time_remaining)
+	state.reset_for_round()
+	Input.action_release("p1_boost")
+	car._physics_process(0.1)
+	Input.action_press("p1_boost")
+	car._physics_process(0.1)
+	var reactivated_before_disable: bool = car.boost_time_remaining > 0.0
+	car.controls_enabled = false
+	var cleared_on_disable: bool = is_zero_approx(car.boost_time_remaining)
+	Input.action_release("p1_boost")
+	_free_fixture(fixture)
+	return (
+		_expect(activated_before_death and reactivated_before_disable, "The fixture must activate boost before invalidation checks.")
+		and _expect(cleared_on_death, "Death must clear active controller boost immediately on the next physics update.")
+		and _expect(stayed_cleared_after_respawn, "Respawn must not resume boost left from before death.")
+		and _expect(cleared_on_disable, "Disabling controls must clear active boost without preserving its timer.")
+	)
+
+func test_controller_round_reset_clears_runtime_and_domain_state() -> bool:
+	var fixture := _create_car_fixture(1, "p1")
+	var car = fixture["car"]
+	var state = fixture["state"]
+	car.velocity = Vector3(2.0, 0.0, -12.0)
+	Input.action_press("p1_boost")
+	car._physics_process(0.1)
+	state.lose_life()
+	var next_safe := Transform3D(Basis.IDENTITY, Vector3(3.0, 1.0, -8.0))
+	car.reset_for_round(next_safe)
+	var reset_cleanly: bool = (
+		state.lives == 3
+		and state.boost_charges == 1
+		and not state.is_dead
+		and state.last_safe_respawn == next_safe
+		and is_zero_approx(car.boost_time_remaining)
+		and car.velocity == Vector3.ZERO
+		and not car.controls_enabled
+	)
+	Input.action_release("p1_boost")
+	car._physics_process(0.1)
+	car.controls_enabled = true
+	Input.action_press("p1_boost")
+	car._physics_process(0.1)
+	var resumed_with_new_charge: bool = state.boost_charges == 0 and car.boost_time_remaining > 0.0
+	Input.action_release("p1_boost")
+	_free_fixture(fixture)
+	return (
+		_expect(reset_cleanly, "Controller round reset must clear velocity/boost, disable controls, and reset its domain state.")
+		and _expect(resumed_with_new_charge, "After reset and a fresh press, the new round's boost charge must activate normally.")
+	)
+
+func test_active_boost_increases_and_preserves_coasting_speed() -> bool:
+	var fixture := _create_car_fixture(1, "p1")
+	var car = fixture["car"]
+	car.velocity = Vector3(0.0, 0.0, -10.0)
+	Input.action_press("p1_boost")
+	car._physics_process(0.25)
+	var speed_after_activation: float = -car.velocity.z
+	Input.action_release("p1_boost")
+	var stayed_boosted_and_capped: bool = speed_after_activation > 10.0 and speed_after_activation <= 44.8
+	for step in range(7):
+		car._physics_process(0.25)
+		var active_speed: float = -car.velocity.z
+		stayed_boosted_and_capped = stayed_boosted_and_capped and active_speed > 10.0 and active_speed <= 44.8
+	var full_duration_elapsed := is_zero_approx(car.boost_time_remaining)
+	var speed_at_expiry: float = -car.velocity.z
+	car._physics_process(0.25)
+	var normal_coasting_resumed: bool = -car.velocity.z < speed_at_expiry
+	_free_fixture(fixture)
+	return (
+		_expect(speed_after_activation > 10.0, "Fresh boost must immediately increase an existing forward coasting velocity.")
+		and _expect(stayed_boosted_and_capped, "Boost must preserve stronger forward motion for two seconds without exceeding its 1.6x cap.")
+		and _expect(full_duration_elapsed and normal_coasting_resumed, "Normal coasting deceleration must resume after the two-second boost expires.")
+	)
+
+func test_shared_car_scene_has_body_collision_and_player_color() -> bool:
+	var packed_scene := load("res://scenes/car/car.tscn") as PackedScene
+	var first_car = packed_scene.instantiate()
+	var second_car = packed_scene.instantiate()
+	first_car.configure(1, "p1")
+	second_car.configure(2, "p2")
+	var first_mesh := first_car.get_node_or_null("BodyMesh") as MeshInstance3D
+	var second_mesh := second_car.get_node_or_null("BodyMesh") as MeshInstance3D
+	var collision := first_car.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	var first_material := first_mesh.material_override as StandardMaterial3D if first_mesh != null else null
+	var second_material := second_mesh.material_override as StandardMaterial3D if second_mesh != null else null
+	var passed := (
+		_expect(first_car is CarController and second_car is CarController, "The shared car scene root must use CarController.")
+		and _expect(first_mesh != null and first_mesh.mesh != null, "The shared car scene must contain visible body geometry.")
+		and _expect(collision != null and collision.shape != null, "The shared car scene must contain an active collision shape.")
+		and _expect(first_material != null and first_material.albedo_color == Color(0.2, 0.55, 1.0), "Configuring P1 must apply its visible blue material.")
+		and _expect(second_material != null and second_material.albedo_color == Color(1.0, 0.3, 0.2), "Configuring P2 must apply its visible red material.")
+	)
+	first_car.free()
+	second_car.free()
+	return passed
 
 func test_split_screen_binds_two_targets_to_shared_world_viewports() -> bool:
 	var scene_tree := Engine.get_main_loop() as SceneTree

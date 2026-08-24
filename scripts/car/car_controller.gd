@@ -15,7 +15,11 @@ const PlayerState = preload("res://scripts/domain/player_round_state.gd")
 
 var player_id := 0
 var input_prefix := ""
-var controls_enabled := false
+var controls_enabled := false:
+	set(next_enabled):
+		controls_enabled = next_enabled
+		if not controls_enabled:
+			_clear_active_boost()
 var round_state: PlayerState
 var boost_time_remaining := 0.0
 
@@ -32,6 +36,14 @@ func configure(next_player_id: int, next_input_prefix: String) -> void:
 		round_state.reset_for_round()
 	_apply_player_color()
 
+func reset_for_round(initial_safe_respawn: Transform3D = Transform3D.IDENTITY) -> void:
+	if round_state == null:
+		round_state = PlayerState.new()
+	round_state.reset_for_round(initial_safe_respawn)
+	velocity = Vector3.ZERO
+	controls_enabled = false
+	_boost_was_pressed = _is_action_pressed("boost")
+
 func _physics_process(delta: float) -> void:
 	var boost_pressed := _is_action_pressed("boost")
 	var accepts_input := (
@@ -41,16 +53,21 @@ func _physics_process(delta: float) -> void:
 		and not round_state.is_eliminated
 	)
 	if not accepts_input:
+		_clear_active_boost()
 		_boost_was_pressed = boost_pressed
 		return
 
+	var boost_activated := false
 	if boost_pressed and not _boost_was_pressed and round_state.try_consume_boost():
 		boost_time_remaining = boost_duration
+		boost_activated = true
 	_boost_was_pressed = boost_pressed
 
 	var speed_scale := boost_multiplier if boost_time_remaining > 0.0 else 1.0
 	var local_velocity := global_transform.basis.inverse() * velocity
 	var forward_velocity := -local_velocity.z
+	if boost_activated and forward_velocity > 0.0:
+		forward_velocity = minf(forward_velocity * boost_multiplier, forward_speed * boost_multiplier)
 	var accelerate_strength := Input.get_action_strength(_action_name("accelerate"))
 	var brake_strength := Input.get_action_strength(_action_name("brake"))
 	if accelerate_strength > 0.0:
@@ -64,6 +81,12 @@ func _physics_process(delta: float) -> void:
 			forward_velocity,
 			-reverse_speed,
 			braking * brake_strength * delta,
+		)
+	elif boost_time_remaining > 0.0 and forward_velocity >= 0.0:
+		forward_velocity = move_toward(
+			forward_velocity,
+			forward_speed * boost_multiplier,
+			acceleration * boost_multiplier * delta,
 		)
 	else:
 		forward_velocity = move_toward(forward_velocity, 0.0, coasting_deceleration * delta)
@@ -88,6 +111,9 @@ func _is_action_pressed(suffix: String) -> bool:
 	if input_prefix.is_empty():
 		return false
 	return Input.is_action_pressed(_action_name(suffix))
+
+func _clear_active_boost() -> void:
+	boost_time_remaining = 0.0
 
 func _apply_player_color() -> void:
 	var body_mesh := get_node_or_null("BodyMesh") as MeshInstance3D
