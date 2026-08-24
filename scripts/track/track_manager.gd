@@ -36,7 +36,7 @@ func apply_extension(option: BuildOption) -> bool:
 	var accepted_option: BuildOption
 	for valid_option in layout.get_valid_options():
 		if _options_match(option, valid_option):
-			accepted_option = option
+			accepted_option = valid_option
 			break
 	if accepted_option == null:
 		return false
@@ -90,9 +90,8 @@ func _options_match(candidate: BuildOption, valid_option: BuildOption) -> bool:
 	return (
 		candidate.variant_id == valid_option.variant_id
 		and candidate.allows_checkpoint == valid_option.allows_checkpoint
-		and candidate.transform.is_equal_approx(valid_option.transform)
-		and candidate.output_transform.is_equal_approx(valid_option.output_transform)
-		and is_equal_approx(candidate.length_meters, valid_option.length_meters)
-		and candidate.footprint.position.is_equal_approx(valid_option.footprint.position)
-		and candidate.footprint.size.is_equal_approx(valid_option.footprint.size)
+		and candidate.transform == valid_option.transform
+		and candidate.output_transform == valid_option.output_transform
+		and candidate.length_meters == valid_option.length_meters
+		and candidate.footprint == valid_option.footprint
 	)

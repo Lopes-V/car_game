@@ -47,11 +47,11 @@ func _configure_road_geometry() -> void:
 	_clear_children(visuals)
 	_clear_children(collision)
 	if option.variant_id == "curve_left" or option.variant_id == "curve_right":
+		var segment_angle := PI * 0.5 / CURVE_SEGMENTS
+		var outer_radius := Constants.TRACK_CURVE_RADIUS_METERS + Constants.TRACK_HALF_WIDTH_METERS
+		var segment_length := 2.0 * outer_radius * tan(segment_angle * 0.5) + 0.02
 		for segment_index in range(CURVE_SEGMENTS):
-			var start_fraction := float(segment_index) / CURVE_SEGMENTS
-			var end_fraction := float(segment_index + 1) / CURVE_SEGMENTS
-			var midpoint_fraction := (start_fraction + end_fraction) * 0.5
-			var segment_length := _path_position(start_fraction).distance_to(_path_position(end_fraction)) + 0.08
+			var midpoint_fraction := (float(segment_index) + 0.5) / CURVE_SEGMENTS
 			_add_road_segment(visuals, collision, _path_transform(midpoint_fraction), segment_length, segment_index)
 		return
 	var output := _local_output_transform().origin

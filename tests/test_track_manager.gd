@@ -10,6 +10,9 @@ func run() -> bool:
 	all_passed = test_piece_exposes_runtime_metadata_and_ordered_trap_slots() and all_passed
 	all_passed = test_checkpoint_metadata_is_created_in_safe_zone() and all_passed
 	all_passed = test_invalid_option_is_rejected_without_mutating_track() and all_passed
+	all_passed = test_extension_stores_canonical_snapshot_not_caller_option() and all_passed
+	all_passed = test_near_match_and_stale_options_are_rejected() and all_passed
+	all_passed = test_both_curves_have_continuous_outer_collision_and_forward_gate() and all_passed
 	return all_passed
 
 func test_initial_track_has_one_piece_and_persistent_finish() -> bool:
@@ -106,6 +109,79 @@ func test_invalid_option_is_rejected_without_mutating_track() -> bool:
 	_free_fixture(fixture)
 	return passed
 
+func test_extension_stores_canonical_snapshot_not_caller_option() -> bool:
+	var fixture := _create_manager_fixture()
+	var manager = fixture["manager"]
+	manager.create_initial_track()
+	var caller_option = _find_option(manager.layout.get_valid_options(), "straight")
+	var applied: bool = caller_option != null and manager.apply_extension(caller_option)
+	var stored_option = manager.layout.pieces[1] if manager.layout.pieces.size() > 1 else null
+	var runtime_piece = manager.pieces_root.get_child(1) if manager.pieces_root.get_child_count() > 1 else null
+	if caller_option != null:
+		caller_option.transform.origin = Vector3(101.0, 102.0, 103.0)
+		caller_option.output_transform.origin = Vector3(201.0, 202.0, 203.0)
+	var passed := (
+		_expect(applied, "A current valid snapshot option must be accepted before canonical storage is checked.")
+		and _expect(stored_option != caller_option, "The layout must store the matched canonical option, not the caller-owned object.")
+		and _expect(runtime_piece != null and runtime_piece.option == stored_option, "The runtime piece must retain the canonical option stored by the layout.")
+		and _expect(stored_option.transform == Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, -20.0)), "Caller mutation must not change the stored canonical input transform.")
+		and _expect(stored_option.output_transform == Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, -40.0)), "Caller mutation must not change the stored canonical output transform.")
+		and _expect(runtime_piece.global_transform == Transform3D(Basis.IDENTITY, Vector3(0.0, 0.0, -20.0)), "Caller mutation must not change placed runtime geometry.")
+	)
+	_free_fixture(fixture)
+	return passed
+
+func test_near_match_and_stale_options_are_rejected() -> bool:
+	var near_fixture := _create_manager_fixture()
+	var near_manager = near_fixture["manager"]
+	near_manager.create_initial_track()
+	var current_straight = _find_option(near_manager.layout.get_valid_options(), "straight")
+	var near_match = BuildOption.new("straight", true, current_straight.transform)
+	near_match.transform.origin.x += 0.000001
+	var near_applied: bool = near_manager.apply_extension(near_match)
+	var near_passed := (
+		_expect(not near_applied, "A forged transform that is only approximately equal must not match the authoritative snapshot.")
+		and _expect(near_manager.layout.pieces.size() == 1, "Rejecting a near-match forgery must leave the layout unchanged.")
+	)
+	_free_fixture(near_fixture)
+
+	var stale_fixture := _create_manager_fixture()
+	var stale_manager = stale_fixture["manager"]
+	stale_manager.create_initial_track()
+	var stale_option = _find_option(stale_manager.layout.get_valid_options(), "straight")
+	var advancing_option = _find_option(stale_manager.layout.get_valid_options(), "curve_left")
+	var advanced: bool = advancing_option != null and stale_manager.apply_extension(advancing_option)
+	var stale_applied: bool = stale_option != null and stale_manager.apply_extension(stale_option)
+	var stale_passed := (
+		_expect(advanced, "A current option must advance the connector before stale rejection is checked.")
+		and _expect(not stale_applied, "An option captured for an earlier connector must be rejected as stale.")
+		and _expect(stale_manager.layout.pieces.size() == 2, "Rejecting a stale option must not append another piece.")
+	)
+	_free_fixture(stale_fixture)
+	return near_passed and stale_passed
+
+func test_both_curves_have_continuous_outer_collision_and_forward_gate() -> bool:
+	var all_passed := true
+	for variant_id in ["curve_left", "curve_right"]:
+		var fixture := _create_manager_fixture()
+		var manager = fixture["manager"]
+		manager.create_initial_track()
+		var option = _find_option(manager.layout.get_valid_options(), variant_id)
+		var applied: bool = option != null and manager.apply_extension(option)
+		var curve_piece = manager.pieces_root.get_child(1) if manager.pieces_root.get_child_count() > 1 else null
+		var gate: Area3D = curve_piece.get_node("OutputGate") if curve_piece != null else null
+		var expected_forward: Vector3 = option.output_transform.basis * Vector3.FORWARD if option != null else Vector3.ZERO
+		var variant_passed := (
+			_expect(applied, "A current %s option must be accepted for curve geometry inspection." % variant_id)
+			and _expect(curve_piece != null and _curve_outer_collision_is_continuous(curve_piece, variant_id), "%s collision boxes must meet or overlap along every outer-edge seam." % variant_id)
+			and _expect(gate != null and gate.get_meta("forward_only", false) == true, "%s output gate must declare forward-only traversal." % variant_id)
+			and _expect(gate != null and gate.global_transform.is_equal_approx(option.output_transform), "%s output gate must use the exact output connector transform." % variant_id)
+			and _expect(gate != null and (gate.get_meta("forward_direction") as Vector3).is_equal_approx(expected_forward), "%s output gate metadata must expose the connector's global forward direction." % variant_id)
+		)
+		all_passed = variant_passed and all_passed
+		_free_fixture(fixture)
+	return all_passed
+
 func _create_manager_fixture() -> Dictionary:
 	var scene_tree := Engine.get_main_loop() as SceneTree
 	var temporary_root := Node3D.new()
@@ -142,6 +218,29 @@ func _slots_are_outside_safe_zone(piece: Node3D, slots: Array) -> bool:
 			and absf(point_in_safe_zone.y) <= half_size.y
 			and absf(point_in_safe_zone.z) <= half_size.z
 		):
+			return false
+	return true
+
+func _curve_outer_collision_is_continuous(piece: Node3D, variant_id: String) -> bool:
+	var collision_shapes := piece.get_node("RoadCollision").get_children()
+	if collision_shapes.size() < 2:
+		return false
+	var outer_side := 1.0 if variant_id == "curve_left" else -1.0
+	for segment_index in range(collision_shapes.size() - 1):
+		var current_shape: CollisionShape3D = collision_shapes[segment_index]
+		var next_shape: CollisionShape3D = collision_shapes[segment_index + 1]
+		var current_box := current_shape.shape as BoxShape3D
+		var next_box := next_shape.shape as BoxShape3D
+		if current_box == null or next_box == null:
+			return false
+		var current_outer_front := current_shape.transform * Vector3(outer_side * current_box.size.x * 0.5, 0.0, -current_box.size.z * 0.5)
+		var next_outer_back := next_shape.transform * Vector3(outer_side * next_box.size.x * 0.5, 0.0, next_box.size.z * 0.5)
+		var seam_forward := (
+			current_shape.transform.basis * Vector3.FORWARD
+			+ next_shape.transform.basis * Vector3.FORWARD
+		).normalized()
+		var seam_gap := (next_outer_back - current_outer_front).dot(seam_forward)
+		if seam_gap > 0.00001:
 			return false
 	return true
 
