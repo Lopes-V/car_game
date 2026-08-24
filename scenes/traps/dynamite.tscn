@@ -1,0 +1,27 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/traps/trap_controller.gd" id="1_script"]
+
+[sub_resource type="StandardMaterial3D" id="DynamiteMaterial"]
+albedo_color = Color(0.82, 0.08, 0.04, 1)
+roughness = 0.75
+
+[sub_resource type="CylinderMesh" id="DynamiteMesh"]
+material = SubResource("DynamiteMaterial")
+top_radius = 0.35
+bottom_radius = 0.35
+height = 0.9
+
+[sub_resource type="CylinderShape3D" id="DynamiteShape"]
+radius = 0.35
+height = 0.9
+
+[node name="Dynamite" type="Area3D"]
+script = ExtResource("1_script")
+trap_type = "dynamite"
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("DynamiteMesh")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("DynamiteShape")

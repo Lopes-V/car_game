@@ -61,6 +61,20 @@ func get_existing_trap_slots() -> Array:
 			slots.append(slot)
 	return slots
 
+func occupy_trap_slot(slot_id: String, trap: Node3D) -> bool:
+	if trap == null or trap.get_parent() != null:
+		return false
+	for slot in get_existing_trap_slots():
+		if slot.get_meta("slot_id", "") != slot_id:
+			continue
+		if slot.get_meta("occupied", false) == true:
+			return false
+		slot.add_child(trap)
+		trap.transform = Transform3D.IDENTITY
+		slot.set_meta("occupied", true)
+		return true
+	return false
+
 func _instantiate_piece(option: BuildOption, piece_index: int) -> Node3D:
 	var piece_scene: PackedScene = VARIANT_CATALOGUE[option.variant_id]
 	var piece = piece_scene.instantiate()

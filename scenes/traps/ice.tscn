@@ -1,0 +1,25 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/traps/trap_controller.gd" id="1_script"]
+
+[sub_resource type="StandardMaterial3D" id="IceMaterial"]
+albedo_color = Color(0.3, 0.82, 1, 0.72)
+transparency = 1
+roughness = 0.18
+
+[sub_resource type="BoxMesh" id="IceMesh"]
+material = SubResource("IceMaterial")
+size = Vector3(2.4, 0.16, 2.4)
+
+[sub_resource type="BoxShape3D" id="IceShape"]
+size = Vector3(2.4, 0.16, 2.4)
+
+[node name="Ice" type="Area3D"]
+script = ExtResource("1_script")
+trap_type = "ice"
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("IceMesh")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("IceShape")
