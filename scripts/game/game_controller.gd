@@ -31,6 +31,8 @@ func _init(
 	build_manager = configured_build_manager
 	if build_manager != null and build_manager.has_signal("track_build_blocked"):
 		build_manager.track_build_blocked.connect(_on_track_build_blocked)
+	if build_manager != null and build_manager.has_signal("build_applied"):
+		build_manager.build_applied.connect(_on_build_applied)
 
 func start_match() -> void:
 	total_scores = {1: 0, 2: 0}
@@ -42,7 +44,10 @@ func start_match() -> void:
 	if progress_tracker != null:
 		progress_tracker.set_initial_respawn(Transform3D.IDENTITY)
 		progress_tracker.reset_round_claims()
-	race_state.begin_round(1)
+	if build_manager != null:
+		build_manager.begin_secret_phase(1)
+	else:
+		race_state.begin_round(1)
 
 func finish_round() -> void:
 	if _round_scored or _terminal_handled or race_state.phase != RaceState.Phase.RESULTS:
@@ -108,6 +113,15 @@ func start_racing(now_seconds: float) -> bool:
 
 func handle_track_build_blocked() -> void:
 	_on_track_build_blocked()
+
+func _on_build_applied(success: bool) -> void:
+	if (
+		not success
+		or _terminal_handled
+		or race_state.phase != RaceState.Phase.APPLY_BUILD
+	):
+		return
+	race_state.phase = RaceState.Phase.COUNTDOWN
 
 func _on_track_build_blocked() -> void:
 	if _terminal_handled:

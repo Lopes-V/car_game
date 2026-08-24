@@ -12,6 +12,7 @@ const ScoreManager = preload("res://scripts/domain/score_manager.gd")
 const RaceState = preload("res://scripts/domain/race_state.gd")
 const GameController = preload("res://scripts/game/game_controller.gd")
 const BuildManager = preload("res://scripts/build/build_manager.gd")
+const TrapController = preload("res://scripts/traps/trap_controller.gd")
 
 func run() -> bool:
 	var all_passed := true
@@ -49,7 +50,138 @@ func run() -> bool:
 	all_passed = test_finish_round_is_idempotent_and_rejects_invalid_phase() and all_passed
 	all_passed = test_next_round_and_racing_reset_only_transient_round_state() and all_passed
 	all_passed = test_track_build_blocked_ends_once_without_race_awards() and all_passed
+	all_passed = test_real_round_one_build_flow_reaches_racing_without_phase_shortcuts() and all_passed
+	all_passed = test_failed_build_application_does_not_start_countdown() and all_passed
+	all_passed = test_equal_target_tie_uses_progress_after_equivalent_placement() and all_passed
+	all_passed = test_equal_target_tie_uses_fewer_deaths_after_equal_progress() and all_passed
+	all_passed = test_equal_target_tie_uses_stable_id_after_exact_round_tie() and all_passed
 	return all_passed
+
+func test_equal_target_tie_uses_progress_after_equivalent_placement() -> bool:
+	var fixture := _create_game_fixture(3)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.total_scores = {1: 16, 2: 14}
+	state.finish_times = {1: 10.0, 2: 10.0}
+	fixture["tracker"].high_water_progress_by_player = {1: 70.0, 2: 80.0}
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var passed := (
+		_expect(game.total_scores == {1: 20, 2: 20}, "The progress tie fixture must finish on equal target totals.")
+		and _expect(game.winner_id == 2, "Equivalent finish placement must next prefer higher meter progress.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_equal_target_tie_uses_fewer_deaths_after_equal_progress() -> bool:
+	var fixture := _create_game_fixture(3)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.total_scores = {1: 15, 2: 16}
+	state.finish_times = {1: 10.0, 2: 10.0}
+	fixture["tracker"].high_water_progress_by_player = {1: 80.0, 2: 80.0}
+	fixture["players"][1].deaths = 2
+	fixture["players"][2].deaths = 0
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var passed := (
+		_expect(game.total_scores == {1: 20, 2: 20}, "The deaths tie fixture must finish on equal target totals.")
+		and _expect(game.winner_id == 2, "Equal placement and progress must next prefer fewer deaths, despite display ordering by ID.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_equal_target_tie_uses_stable_id_after_exact_round_tie() -> bool:
+	var fixture := _create_game_fixture(3)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.total_scores = {1: 14, 2: 16}
+	state.finish_times = {1: 10.0, 2: 10.0}
+	fixture["tracker"].high_water_progress_by_player = {1: 80.0, 2: 80.0}
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var passed := (
+		_expect(game.total_scores == {1: 20, 2: 20}, "The stable-id fixture must finish on equal target totals.")
+		and _expect(game.winner_id == 1, "An exact placement/progress/deaths tie must prefer lower stable id.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_real_round_one_build_flow_reaches_racing_without_phase_shortcuts() -> bool:
+	var fixture := _create_real_build_game_fixture()
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	var build = fixture["build_manager"]
+	game.start_match()
+	var option_id: String = fixture["track_manager"].layout.get_valid_options()[0].variant_id
+	var extension_locked: bool = build.submit_extension(1, option_id)
+	var modification_locked: bool = build.submit_modification(2, "ice", _initial_slot_ids_for_round_flow())
+	var applied: bool = build.reveal_and_apply()
+	var countdown_reached: bool = state.phase == RaceState.Phase.COUNTDOWN
+	var racing_started: bool = game.start_racing(5.0)
+	var passed := (
+		_expect(build.builder_player_id == 1 and build.modifier_player_id == 2, "start_match must initialize real round-one roles through BuildManager exactly once.")
+		and _expect(extension_locked and modification_locked and applied, "Real secret round-one choices must lock, reveal, and apply successfully.")
+		and _expect(countdown_reached, "A successful real build application must enter COUNTDOWN without a test phase assignment.")
+		and _expect(racing_started and state.phase == RaceState.Phase.RACING, "The guarded COUNTDOWN boundary must allow GameController to start RACING.")
+		and _expect(state.round_number == 1 and is_equal_approx(state.race_end_time, 125.0), "Round one must be initialized once and retain the 120-second racing deadline.")
+	)
+	_free_real_build_game_fixture(fixture)
+	return passed
+
+func test_failed_build_application_does_not_start_countdown() -> bool:
+	var fixture := _create_real_build_game_fixture()
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	var build = fixture["build_manager"]
+	var track = fixture["track_manager"]
+	game.start_match()
+	var option_id: String = track.layout.get_valid_options()[0].variant_id
+	build.submit_extension(1, option_id)
+	build.submit_modification(2, "dynamite", _initial_slot_ids_for_round_flow())
+	for slot_id in _initial_slot_ids_for_round_flow():
+		track.occupy_trap_slot(slot_id, TrapController.new("ice"))
+	var applied: bool = build.reveal_and_apply()
+	var racing_started: bool = game.start_racing(5.0)
+	var passed := (
+		_expect(not applied, "The real fixture must fail when all phase-snapshot trap preferences become occupied.")
+		and _expect(state.phase == RaceState.Phase.APPLY_BUILD, "A failed build application must remain outside COUNTDOWN.")
+		and _expect(not racing_started and is_zero_approx(state.race_end_time), "A failed application must not permit RACING or create a deadline.")
+	)
+	_free_real_build_game_fixture(fixture)
+	return passed
+
+func _create_real_build_game_fixture() -> Dictionary:
+	var scene_tree := Engine.get_main_loop() as SceneTree
+	var root := Node3D.new()
+	scene_tree.root.add_child(root)
+	var track := TrackManager.new()
+	root.add_child(track)
+	track.create_initial_track()
+	var players := {1: PlayerRoundState.new(), 2: PlayerRoundState.new()}
+	var tracker := ProgressTracker.new(track.layout, players)
+	track.configure_progress_tracker(tracker)
+	var race_state := RaceState.new()
+	var build := BuildManager.new(race_state, track)
+	root.add_child(build)
+	var game := GameController.new(race_state, tracker, players, build)
+	root.add_child(game)
+	return {
+		"root": root,
+		"game": game,
+		"race_state": race_state,
+		"build_manager": build,
+		"track_manager": track,
+	}
+
+func _free_real_build_game_fixture(fixture: Dictionary) -> void:
+	var root: Node3D = fixture["root"]
+	var scene_tree := Engine.get_main_loop() as SceneTree
+	scene_tree.root.remove_child(root)
+	root.free()
+
+func _initial_slot_ids_for_round_flow() -> Array[String]:
+	return ["piece_0_slot_0", "piece_0_slot_1", "piece_0_slot_2"]
 
 func test_finishers_rank_before_dnfs_and_finish_time_wins() -> bool:
 	var ranked := ScoreManager.rank([

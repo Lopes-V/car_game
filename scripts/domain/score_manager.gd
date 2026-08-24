@@ -46,13 +46,17 @@ static func current_round_tie_order(ranked_results: Array, deaths: Dictionary) -
 	for result in ranked_results:
 		ordered.append({
 			"id": int(result["id"]),
-			"rank": ordered.size(),
+			"finish_time": float(result.get("finish_time", -1.0)),
 			"progress": float(result.get("progress", 0.0)),
 			"deaths": int(deaths.get(int(result["id"]), 0)),
 		})
 	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if a["rank"] != b["rank"]:
-			return a["rank"] < b["rank"]
+		var a_finished: bool = a["finish_time"] >= 0.0
+		var b_finished: bool = b["finish_time"] >= 0.0
+		if a_finished != b_finished:
+			return a_finished
+		if a_finished and not is_equal_approx(a["finish_time"], b["finish_time"]):
+			return a["finish_time"] < b["finish_time"]
 		if not is_equal_approx(a["progress"], b["progress"]):
 			return a["progress"] > b["progress"]
 		if a["deaths"] != b["deaths"]:
