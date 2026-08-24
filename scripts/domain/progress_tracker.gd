@@ -7,6 +7,7 @@ signal respawn_requested(player_id: int, safe_transform: Transform3D)
 var layout
 var player_states: Dictionary = {}
 var current_piece_indexes: Dictionary = {}
+var high_water_progress_by_player: Dictionary = {}
 var activated_respawns_by_player: Dictionary = {}
 var claimed_checkpoints: Dictionary = {}
 var _initial_respawn := Transform3D.IDENTITY
@@ -16,6 +17,7 @@ func _init(track_layout = null, players: Dictionary = {}) -> void:
 	player_states = players
 	for player_id in player_states:
 		current_piece_indexes[player_id] = 0
+		high_water_progress_by_player[player_id] = 0.0
 		activated_respawns_by_player[player_id] = {}
 
 func record_piece_gate(player_id: int, piece_index: int) -> bool:
@@ -25,12 +27,19 @@ func record_piece_gate(player_id: int, piece_index: int) -> bool:
 	if piece_index != current_index + 1 or piece_index >= layout.pieces.size():
 		return false
 	current_piece_indexes[player_id] = piece_index
+	high_water_progress_by_player[player_id] = maxf(
+		high_water_progress_by_player.get(player_id, 0.0),
+		layout.global_progress(piece_index, 0.0),
+	)
 	return true
 
 func global_progress(player_id: int, local_distance: float) -> float:
 	if layout == null or not current_piece_indexes.has(player_id):
 		return 0.0
-	return layout.global_progress(current_piece_indexes[player_id], local_distance)
+	var sampled_progress: float = layout.global_progress(current_piece_indexes[player_id], local_distance)
+	var high_water: float = maxf(high_water_progress_by_player.get(player_id, 0.0), sampled_progress)
+	high_water_progress_by_player[player_id] = high_water
+	return high_water
 
 func try_claim_checkpoint(player_id: int, checkpoint_id: String, piece_index: int) -> bool:
 	if not _is_valid_trigger_piece(player_id, piece_index) or claimed_checkpoints.has(checkpoint_id):
@@ -96,6 +105,7 @@ func reset_round_claims() -> void:
 	for player_id in player_states:
 		activated_respawns_by_player[player_id] = {}
 		current_piece_indexes[player_id] = 0
+		high_water_progress_by_player[player_id] = 0.0
 		player_states[player_id].last_safe_respawn = _initial_respawn
 
 func _is_valid_trigger_piece(player_id: int, piece_index: int) -> bool:

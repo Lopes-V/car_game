@@ -26,7 +26,7 @@ func _run_suites() -> void:
 			failed_suite_count += 1
 			continue
 
-		if suite.run() != true:
+		if await suite.run() != true:
 			failed_suite_count += 1
 
 	quit(0 if failed_suite_count == 0 else 1)

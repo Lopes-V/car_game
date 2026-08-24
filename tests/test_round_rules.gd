@@ -24,12 +24,14 @@ func run() -> bool:
 	all_passed = test_split_screen_binds_two_targets_to_shared_world_viewports() and all_passed
 	all_passed = test_piece_gates_reject_skips_duplicates_and_reverse_progress() and all_passed
 	all_passed = test_global_progress_uses_only_current_logical_piece_distance() and all_passed
+	all_passed = test_global_progress_does_not_decrease_when_local_distance_moves_backward() and all_passed
 	all_passed = test_checkpoint_first_claim_resets_each_round() and all_passed
 	all_passed = test_real_triggers_accept_only_forward_car_crossings() and all_passed
 	all_passed = test_runtime_output_gates_advance_only_to_an_existing_next_piece() and all_passed
 	all_passed = test_initial_respawn_and_runtime_points_have_stable_identity() and all_passed
 	all_passed = test_survivor_respawns_dead_opponent_at_opponents_saved_transform() and all_passed
 	all_passed = test_all_dead_recovery_excludes_eliminated_players() and all_passed
+	all_passed = await test_area_triggers_receive_real_body_entered_events() and all_passed
 	return all_passed
 
 func test_piece_gates_reject_skips_duplicates_and_reverse_progress() -> bool:
@@ -50,6 +52,22 @@ func test_global_progress_uses_only_current_logical_piece_distance() -> bool:
 	return (
 		_expect(is_equal_approx(tracker.global_progress(1, 3.0), 23.0), "Local path distance must be added to the current piece's accumulated meter length.")
 		and _expect(is_equal_approx(tracker.global_progress(1, 999.0), 40.0), "Local distance must clamp to the current piece instead of projecting onto a nearby later piece.")
+	)
+
+func test_global_progress_does_not_decrease_when_local_distance_moves_backward() -> bool:
+	var fixture := _create_progress_fixture(3)
+	var tracker = fixture["tracker"]
+	var forward_progress: float = tracker.global_progress(1, 15.0)
+	var backward_sample: float = tracker.global_progress(1, 3.0)
+	tracker.record_piece_gate(1, 1)
+	var next_piece_start: float = tracker.global_progress(1, 0.0)
+	tracker.reset_round_claims()
+	var reset_progress: float = tracker.global_progress(1, 2.0)
+	return (
+		_expect(is_equal_approx(forward_progress, 15.0), "A forward sample must establish the player's meter high-water mark.")
+		and _expect(is_equal_approx(backward_sample, 15.0), "Driving backward on the same piece must not decrease timeout-ranking progress.")
+		and _expect(is_equal_approx(next_piece_start, 20.0), "Entering the next piece must advance the high-water mark to that piece's accumulated start distance.")
+		and _expect(is_equal_approx(reset_progress, 2.0), "Starting a new round must clear the prior race's progress high-water mark.")
 	)
 
 func test_checkpoint_first_claim_resets_each_round() -> bool:
@@ -198,6 +216,74 @@ func test_all_dead_recovery_excludes_eliminated_players() -> bool:
 		and _expect(requests == [[1, p1_safe]], "All-dead recovery must use each eligible player's saved transform and exclude eliminated players.")
 		and _expect(not players[1].is_dead and players[2].is_eliminated, "Recovery must revive eligible state without reviving eliminated state.")
 	)
+
+func test_area_triggers_receive_real_body_entered_events() -> bool:
+	var scene_tree := Engine.get_main_loop() as SceneTree
+	var root := Node3D.new()
+	scene_tree.root.add_child(root)
+	var fixture := _create_progress_fixture(2)
+	var tracker = fixture["tracker"]
+	var checkpoint := RaceCheckpoint.new()
+	checkpoint.configure("checkpoint_physics", 0, tracker)
+	_add_trigger_shape(checkpoint)
+	root.add_child(checkpoint)
+	var respawn := RespawnPoint.new()
+	respawn.position.x = 10.0
+	respawn.configure("respawn_physics", 0, tracker, Transform3D(Basis.IDENTITY, Vector3(10.0, 0.0, 0.0)))
+	_add_trigger_shape(respawn)
+	root.add_child(respawn)
+	var car_scene := load("res://scenes/car/car.tscn") as PackedScene
+	var car = car_scene.instantiate()
+	car.configure(1, "p1")
+	root.add_child(car)
+	var checkpoint_crossings: Array = []
+	var respawn_crossings: Array = []
+	checkpoint.crossed.connect(func(player_id: int, checkpoint_id: String, piece_index: int): checkpoint_crossings.append([player_id, checkpoint_id, piece_index]))
+	respawn.crossed.connect(func(player_id: int, point_id: String, piece_index: int): respawn_crossings.append([player_id, point_id, piece_index]))
+
+	car.position = Vector3(0.0, 0.0, 5.0)
+	car.velocity = Vector3(0.0, 0.0, 5.0)
+	await _complete_physics_step(scene_tree)
+	car.position = Vector3.ZERO
+	await _complete_physics_step(scene_tree)
+	var reverse_checkpoint_ignored := checkpoint_crossings.is_empty()
+	car.position = Vector3(0.0, 0.0, 5.0)
+	await _complete_physics_step(scene_tree)
+	car.velocity = Vector3(0.0, 0.0, -5.0)
+	car.position = Vector3.ZERO
+	await _complete_physics_step(scene_tree)
+	var forward_checkpoint_received := checkpoint_crossings == [[1, "checkpoint_physics", 0]]
+
+	car.position = Vector3(10.0, 0.0, 5.0)
+	car.velocity = Vector3(0.0, 0.0, 5.0)
+	await _complete_physics_step(scene_tree)
+	car.position = Vector3(10.0, 0.0, 0.0)
+	await _complete_physics_step(scene_tree)
+	var reverse_respawn_ignored := respawn_crossings.is_empty()
+	car.position = Vector3(10.0, 0.0, 5.0)
+	await _complete_physics_step(scene_tree)
+	car.velocity = Vector3(0.0, 0.0, -5.0)
+	car.position = Vector3(10.0, 0.0, 0.0)
+	await _complete_physics_step(scene_tree)
+	var forward_respawn_received := respawn_crossings == [[1, "respawn_physics", 0]]
+
+	scene_tree.root.remove_child(root)
+	root.free()
+	return (
+		_expect(reverse_checkpoint_ignored and reverse_respawn_ignored, "Real body_entered events must ignore reverse-moving configured cars.")
+		and _expect(forward_checkpoint_received and forward_respawn_received, "_ready bindings must forward real body_entered events for forward-moving configured cars; checkpoint=%s respawn=%s." % [checkpoint_crossings, respawn_crossings])
+	)
+
+func _add_trigger_shape(trigger: Area3D) -> void:
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(4.0, 4.0, 2.0)
+	collision.shape = shape
+	trigger.add_child(collision)
+
+func _complete_physics_step(scene_tree: SceneTree) -> void:
+	await scene_tree.physics_frame
+	await scene_tree.process_frame
 
 func _create_progress_fixture(piece_count: int) -> Dictionary:
 	var layout = TrackLayout.with_initial_straight()
