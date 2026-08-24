@@ -64,23 +64,25 @@ static func _local_output_transform(candidate_id: String) -> Transform3D:
 
 static func _local_footprint(candidate_id: String) -> AABB:
 	var clearance := Constants.TRACK_HALF_WIDTH_METERS + Constants.TRACK_SAFETY_MARGIN_METERS
-	var vertical_extent := Constants.TRACK_COLLISION_VERTICAL_EXTENT_METERS
+	var vertical_size := Constants.TRACK_SAFETY_MARGIN_METERS * 2.0
+	if candidate_id == "uphill":
+		vertical_size += Constants.TRACK_UPHILL_RISE_METERS
 	var forward_length := Constants.TRACK_PIECE_LENGTH_METERS
 	match candidate_id:
 		"curve_left":
 			return AABB(
-				Vector3(-Constants.TRACK_CURVE_RADIUS_METERS, -vertical_extent, -Constants.TRACK_CURVE_RADIUS_METERS),
-				Vector3(Constants.TRACK_CURVE_RADIUS_METERS + clearance, vertical_extent * 2.0, Constants.TRACK_CURVE_RADIUS_METERS),
+				Vector3(-Constants.TRACK_CURVE_RADIUS_METERS, -Constants.TRACK_SAFETY_MARGIN_METERS, -Constants.TRACK_CURVE_RADIUS_METERS - clearance),
+				Vector3(Constants.TRACK_CURVE_RADIUS_METERS + clearance, vertical_size, Constants.TRACK_CURVE_RADIUS_METERS + clearance),
 			)
 		"curve_right":
 			return AABB(
-				Vector3(-clearance, -vertical_extent, -Constants.TRACK_CURVE_RADIUS_METERS),
-				Vector3(Constants.TRACK_CURVE_RADIUS_METERS + clearance, vertical_extent * 2.0, Constants.TRACK_CURVE_RADIUS_METERS),
+				Vector3(-clearance, -Constants.TRACK_SAFETY_MARGIN_METERS, -Constants.TRACK_CURVE_RADIUS_METERS - clearance),
+				Vector3(Constants.TRACK_CURVE_RADIUS_METERS + clearance, vertical_size, Constants.TRACK_CURVE_RADIUS_METERS + clearance),
 			)
 		_:
 			return AABB(
-				Vector3(-clearance, -vertical_extent, -forward_length),
-				Vector3(clearance * 2.0, vertical_extent * 2.0, forward_length),
+				Vector3(-clearance, -Constants.TRACK_SAFETY_MARGIN_METERS, -forward_length),
+				Vector3(clearance * 2.0, vertical_size, forward_length),
 			)
 
 static func _transform_aabb(local_box: AABB, world_transform: Transform3D) -> AABB:

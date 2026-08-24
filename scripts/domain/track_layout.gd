@@ -60,10 +60,10 @@ func global_progress(piece_index: int, local_distance: float) -> float:
 
 func _is_candidate_valid(candidate: BuildOption) -> bool:
 	for piece in pieces:
-		if _has_positive_volume_intersection(candidate.footprint, piece.footprint):
+		if _has_positive_xz_intersection(candidate.footprint, piece.footprint):
 			return false
 	return true
 
-func _has_positive_volume_intersection(first: AABB, second: AABB) -> bool:
+func _has_positive_xz_intersection(first: AABB, second: AABB) -> bool:
 	var overlap := first.end.min(second.end) - first.position.max(second.position)
-	return overlap.x > 0.0 and overlap.y > 0.0 and overlap.z > 0.0
+	return overlap.x > 0.0 and overlap.z > 0.0

@@ -9,16 +9,18 @@ func run() -> bool:
 	if BuildOption == null or TrackLayout == null:
 		push_error("TrackLayout and BuildOption must be defined.")
 		return false
-	return (
-		test_build_option_constructor_fully_initializes_geometry()
-		and test_initial_straight_uses_the_track_coordinate_convention()
-		and test_initial_connector_offers_every_discrete_variant()
-		and test_curve_options_have_expected_end_connectors_and_lengths()
-		and test_option_that_intersects_existing_piece_is_not_offered()
-		and test_blocked_end_returns_no_build_options()
-		and test_checkpoint_waits_for_first_allowed_new_piece_after_threshold()
-		and test_global_progress_uses_clamped_distance_units_only()
-	)
+	var all_passed := true
+	all_passed = test_build_option_constructor_fully_initializes_geometry() and all_passed
+	all_passed = test_curve_footprints_include_output_tangent_clearance() and all_passed
+	all_passed = test_initial_straight_uses_the_track_coordinate_convention() and all_passed
+	all_passed = test_initial_connector_offers_every_discrete_variant() and all_passed
+	all_passed = test_curve_options_have_expected_end_connectors_and_lengths() and all_passed
+	all_passed = test_option_that_intersects_existing_piece_is_not_offered() and all_passed
+	all_passed = test_blocked_end_returns_no_build_options() and all_passed
+	all_passed = test_xz_overlap_is_rejected_despite_extreme_height_separation() and all_passed
+	all_passed = test_checkpoint_waits_for_first_allowed_new_piece_after_threshold() and all_passed
+	all_passed = test_global_progress_uses_clamped_distance_units_only() and all_passed
+	return all_passed
 
 func test_build_option_constructor_fully_initializes_geometry() -> bool:
 	var option = BuildOption.new("uphill", true)
@@ -29,6 +31,20 @@ func test_build_option_constructor_fully_initializes_geometry() -> bool:
 		and _expect(option.output_transform.origin.is_equal_approx(Vector3(0.0, 5.0, -20.0)), "A build option must initialize its output transform.")
 		and _expect(is_equal_approx(option.length_meters, 20.0), "A build option must initialize its path length.")
 		and _expect(option.footprint.has_volume(), "A build option must initialize a collision footprint.")
+	)
+
+func test_curve_footprints_include_output_tangent_clearance() -> bool:
+	var left = BuildOption.new("curve_left", false)
+	var right = BuildOption.new("curve_right", false)
+	return (
+		_expect(is_equal_approx(left.footprint.position.x, -20.0), "A left curve footprint must stop at its output connector plane.")
+		and _expect(is_equal_approx(left.footprint.position.z, -24.0), "A left curve footprint must include four meters of output-tangent clearance.")
+		and _expect(is_equal_approx(left.footprint.end.x, 4.0), "A left curve footprint must include four meters of input-tangent clearance.")
+		and _expect(is_zero_approx(left.footprint.end.z), "A left curve footprint must keep its input seam unpadded.")
+		and _expect(is_equal_approx(right.footprint.position.x, -4.0), "A right curve footprint must include four meters of input-tangent clearance.")
+		and _expect(is_equal_approx(right.footprint.position.z, -24.0), "A right curve footprint must include four meters of output-tangent clearance.")
+		and _expect(is_equal_approx(right.footprint.end.x, 20.0), "A right curve footprint must stop at its output connector plane.")
+		and _expect(is_zero_approx(right.footprint.end.z), "A right curve footprint must keep its input seam unpadded.")
 	)
 
 func test_initial_straight_uses_the_track_coordinate_convention() -> bool:
@@ -91,6 +107,25 @@ func test_blocked_end_returns_no_build_options() -> bool:
 	return _expect(
 		layout.get_valid_options().is_empty(),
 		"A boxed-in end must return an empty list after the straight fallback also collides.",
+	)
+
+func test_xz_overlap_is_rejected_despite_extreme_height_separation() -> bool:
+	var layout = TrackLayout.with_initial_straight()
+	for _piece_index in range(401):
+		if not _append_offered(layout, "uphill"):
+			return false
+	if not _append_offered(layout, "curve_left"):
+		return false
+	if not _append_offered(layout, "curve_left"):
+		return false
+	for _piece_index in range(401):
+		if not _append_offered(layout, "straight"):
+			return false
+	if not _append_offered(layout, "curve_left"):
+		return false
+	return _expect(
+		layout.get_valid_options().is_empty(),
+		"XZ overlap must be rejected even when candidate and occupied geometry differ by 2005 vertical meters.",
 	)
 
 func test_checkpoint_waits_for_first_allowed_new_piece_after_threshold() -> bool:
