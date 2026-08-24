@@ -1,0 +1,20 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/car/car_controller.gd" id="1_car_controller"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_body"]
+size = Vector3(1.8, 0.8, 3.2)
+
+[sub_resource type="BoxShape3D" id="BoxShape_car"]
+size = Vector3(1.8, 0.8, 3.2)
+
+[node name="Car" type="CharacterBody3D"]
+script = ExtResource("1_car_controller")
+
+[node name="BodyMesh" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.6, 0)
+mesh = SubResource("BoxMesh_body")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.6, 0)
+shape = SubResource("BoxShape_car")
