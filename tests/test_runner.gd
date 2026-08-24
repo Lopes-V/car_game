@@ -1,6 +1,9 @@
 extends SceneTree
 
-const SUITES := ["res://tests/test_race_state.gd"]
+const SUITES := [
+	"res://tests/test_race_state.gd",
+	"res://tests/test_track_layout.gd",
+]
 
 func _init() -> void:
 	var failed_suite_count := 0
