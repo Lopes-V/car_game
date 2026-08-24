@@ -1,0 +1,24 @@
+[gd_scene load_steps=4 format=3]
+
+[sub_resource type="BoxMesh" id="BoxMesh_finish"]
+size = Vector3(6, 3, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_finish"]
+albedo_color = Color(0.95, 0.95, 0.95, 1)
+roughness = 0.75
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_finish"]
+size = Vector3(6, 3, 0.4)
+
+[node name="Finish" type="Node3D"]
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+position = Vector3(0, 1.5, 0)
+mesh = SubResource("BoxMesh_finish")
+material_override = SubResource("StandardMaterial3D_finish")
+
+[node name="FinishGate" type="Area3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FinishGate"]
+position = Vector3(0, 1.5, 0)
+shape = SubResource("BoxShape3D_finish")

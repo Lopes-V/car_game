@@ -3,9 +3,13 @@ extends SceneTree
 const SUITES := [
 	"res://tests/test_race_state.gd",
 	"res://tests/test_track_layout.gd",
+	"res://tests/test_track_manager.gd",
 ]
 
 func _init() -> void:
+	call_deferred("_run_suites")
+
+func _run_suites() -> void:
 	var failed_suite_count := 0
 	for suite_path in SUITES:
 		var suite_script = load(suite_path)
