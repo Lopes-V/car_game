@@ -1,8 +1,37 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/game_controller.gd" id="1_game_controller"]
+[ext_resource type="Script" path="res://scripts/track/track_manager.gd" id="2_track_manager"]
+[ext_resource type="PackedScene" path="res://scenes/car/car.tscn" id="3_car"]
+[ext_resource type="Script" path="res://scripts/ui/split_screen_manager.gd" id="4_split"]
+[ext_resource type="PackedScene" path="res://scenes/ui/hud.tscn" id="5_hud"]
 
 [node name="Main" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, -25, 0)
+shadow_enabled = true
+
+[node name="TrackManager" type="Node3D" parent="."]
+script = ExtResource("2_track_manager")
+
+[node name="Player1" parent="." instance=ExtResource("3_car")]
+
+[node name="Player2" parent="." instance=ExtResource("3_car")]
+
+[node name="SplitScreenManager" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4_split")
+
+[node name="HUD" parent="." instance=ExtResource("5_hud")]
 
 [node name="GameController" type="Node" parent="."]
 script = ExtResource("1_game_controller")

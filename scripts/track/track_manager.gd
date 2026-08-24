@@ -76,6 +76,11 @@ func get_existing_trap_slots() -> Array:
 			slots.append(slot)
 	return slots
 
+func get_piece(piece_index: int) -> Node3D:
+	if pieces_root == null or piece_index < 0 or piece_index >= pieces_root.get_child_count():
+		return null
+	return pieces_root.get_child(piece_index) as Node3D
+
 func occupy_trap_slot(slot_id: String, trap: Node3D) -> bool:
 	if trap == null or trap.get_parent() != null:
 		return false

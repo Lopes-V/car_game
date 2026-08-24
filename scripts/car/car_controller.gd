@@ -22,6 +22,7 @@ var controls_enabled := false:
 			_clear_active_boost()
 var round_state: PlayerState
 var boost_time_remaining := 0.0
+var low_grip_time_remaining := 0.0
 
 var _boost_was_pressed := false
 
@@ -42,6 +43,7 @@ func reset_for_round(initial_safe_respawn: Transform3D = Transform3D.IDENTITY) -
 	round_state.reset_for_round(initial_safe_respawn)
 	velocity = Vector3.ZERO
 	controls_enabled = false
+	low_grip_time_remaining = 0.0
 	_boost_was_pressed = _is_action_pressed("boost")
 
 func _physics_process(delta: float) -> void:
@@ -96,13 +98,18 @@ func _physics_process(delta: float) -> void:
 		var travel_direction := signf(forward_velocity)
 		rotate_y(-steer_input * steering_speed * travel_direction * delta)
 
-	local_velocity.x = move_toward(local_velocity.x, 0.0, lateral_damping * delta)
+	var current_lateral_damping := lateral_damping * (0.2 if low_grip_time_remaining > 0.0 else 1.0)
+	local_velocity.x = move_toward(local_velocity.x, 0.0, current_lateral_damping * delta)
 	local_velocity.z = -forward_velocity
 	velocity = global_transform.basis * local_velocity
 	if not is_on_floor():
 		velocity.y -= float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)) * delta
 	move_and_slide()
 	boost_time_remaining = maxf(boost_time_remaining - delta, 0.0)
+	low_grip_time_remaining = maxf(low_grip_time_remaining - delta, 0.0)
+
+func apply_low_grip(duration_seconds: float = 2.0) -> void:
+	low_grip_time_remaining = maxf(low_grip_time_remaining, duration_seconds)
 
 func _action_name(suffix: String) -> StringName:
 	return StringName("%s_%s" % [input_prefix, suffix])

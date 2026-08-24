@@ -108,6 +108,20 @@ func reset_traps_for_racing() -> void:
 			if child is TrapController:
 				child.reset_for_round()
 
+func get_extension_option_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for option_id in _option_snapshot:
+		ids.append(String(option_id))
+	ids.sort()
+	return ids
+
+func get_available_slot_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for slot_id in _slot_id_snapshot:
+		ids.append(String(slot_id))
+	ids.sort()
+	return ids
+
 func _can_submit(player_id: int, assigned_player_id: int) -> bool:
 	return (
 		_phase_started
