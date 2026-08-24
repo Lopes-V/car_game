@@ -8,6 +8,10 @@ const TrackManager = preload("res://scripts/track/track_manager.gd")
 const ProgressTracker = preload("res://scripts/domain/progress_tracker.gd")
 const RaceCheckpoint = preload("res://scripts/track/race_checkpoint.gd")
 const RespawnPoint = preload("res://scripts/track/respawn_point.gd")
+const ScoreManager = preload("res://scripts/domain/score_manager.gd")
+const RaceState = preload("res://scripts/domain/race_state.gd")
+const GameController = preload("res://scripts/game/game_controller.gd")
+const BuildManager = preload("res://scripts/build/build_manager.gd")
 
 func run() -> bool:
 	var all_passed := true
@@ -32,7 +36,245 @@ func run() -> bool:
 	all_passed = test_survivor_respawns_dead_opponent_at_opponents_saved_transform() and all_passed
 	all_passed = test_all_dead_recovery_excludes_eliminated_players() and all_passed
 	all_passed = await test_area_triggers_receive_real_body_entered_events() and all_passed
+	all_passed = test_finishers_rank_before_dnfs_and_finish_time_wins() and all_passed
+	all_passed = test_exact_rank_ties_use_progress_then_stable_id() and all_passed
+	all_passed = test_dnfs_rank_by_progress_then_stable_id() and all_passed
+	all_passed = test_score_results_awards_every_source() and all_passed
+	all_passed = test_bare_id_score_fixture_remains_compatible() and all_passed
+	all_passed = test_current_round_tie_order_is_deterministic() and all_passed
+	all_passed = test_finish_round_snapshots_ranks_and_scores_real_round_state() and all_passed
+	all_passed = test_target_score_uses_highest_total_after_all_awards() and all_passed
+	all_passed = test_equal_target_totals_use_current_round_tie_order() and all_passed
+	all_passed = test_round_five_uses_totals_then_current_round_tie_order() and all_passed
+	all_passed = test_finish_round_is_idempotent_and_rejects_invalid_phase() and all_passed
+	all_passed = test_next_round_and_racing_reset_only_transient_round_state() and all_passed
+	all_passed = test_track_build_blocked_ends_once_without_race_awards() and all_passed
 	return all_passed
+
+func test_finishers_rank_before_dnfs_and_finish_time_wins() -> bool:
+	var ranked := ScoreManager.rank([
+		{"id": 2, "finish_time": -1.0, "progress": 99.0},
+		{"id": 1, "finish_time": 12.0, "progress": 30.0},
+		{"id": 3, "finish_time": 11.0, "progress": 20.0},
+	])
+	return _expect(
+		_ranked_ids(ranked) == [3, 1, 2],
+		"Finishers must precede DNFs, with lower finish time winning among finishers.",
+	)
+
+func test_exact_rank_ties_use_progress_then_stable_id() -> bool:
+	var ranked := ScoreManager.rank([
+		{"id": 3, "finish_time": 10.0, "progress": 50.0},
+		{"id": 2, "finish_time": 10.0, "progress": 60.0},
+		{"id": 1, "finish_time": 10.0, "progress": 60.0},
+	])
+	return _expect(
+		_ranked_ids(ranked) == [1, 2, 3],
+		"Equal finish times must use higher meter progress, then lower stable id.",
+	)
+
+func test_dnfs_rank_by_progress_then_stable_id() -> bool:
+	var ranked := ScoreManager.rank([
+		{"id": 2, "finish_time": -1.0, "progress": 70.0},
+		{"id": 3, "finish_time": -1.0, "progress": 80.0},
+		{"id": 1, "finish_time": -1.0, "progress": 80.0},
+	])
+	return _expect(
+		_ranked_ids(ranked) == [1, 3, 2],
+		"DNFs must rank by higher meter progress, then lower stable id.",
+	)
+
+func test_score_results_awards_every_source() -> bool:
+	var scores := ScoreManager.score_results(
+		[
+			{"id": 1, "finish_time": 12.0, "progress": 80.0},
+			{"id": 2, "finish_time": -1.0, "progress": 60.0},
+		],
+		{"checkpoint_1": 1, "checkpoint_2": 1, "checkpoint_3": 2},
+		{1: 0, 2: 2},
+	)
+	return (
+		_expect(scores[1] == 8, "First place, finish, two checkpoints, and survival must total eight points.")
+		and _expect(scores[2] == 3, "Second place and one checkpoint must total three points without finish/survival bonuses.")
+	)
+
+func test_bare_id_score_fixture_remains_compatible() -> bool:
+	var scores := ScoreManager.score_results([1, 2], {"checkpoint_1": 1}, {1: 0, 2: 1})
+	return _expect(
+		scores[1] == 6 and scores[2] == 2,
+		"Bare ids are ranked DNFs: the compatibility fixture must award P1 exactly six and no finish bonus.",
+	)
+
+func test_current_round_tie_order_is_deterministic() -> bool:
+	var ranked := [
+		{"id": 2, "finish_time": 15.0, "progress": 50.0},
+		{"id": 1, "finish_time": -1.0, "progress": 90.0},
+	]
+	return _expect(
+		ScoreManager.current_round_tie_order(ranked, {1: 0, 2: 3}) == [2, 1],
+		"Better current-round rank must lead the match tie order before progress, deaths, and stable id.",
+	)
+
+func test_finish_round_snapshots_ranks_and_scores_real_round_state() -> bool:
+	var fixture := _create_game_fixture(3)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	var tracker = fixture["tracker"]
+	state.finish_times = {1: 18.0}
+	state.phase = RaceState.Phase.RESULTS
+	tracker.high_water_progress_by_player = {1: 55.0, 2: 80.0}
+	tracker.claimed_checkpoints = {"checkpoint_1": 2}
+	fixture["players"][2].deaths = 1
+	game.finish_round()
+	tracker.high_water_progress_by_player[1] = 999.0
+	fixture["players"][1].deaths = 2
+	var passed := (
+		_expect(_ranked_ids(game.current_ranked_results) == [1, 2], "A finisher must rank ahead of a farther DNF in the round snapshot.")
+		and _expect(game.current_ranked_results[0]["progress"] == 55.0, "Round results must retain the immutable meter snapshot used for scoring.")
+		and _expect(game.current_round_scores == {1: 6, 2: 3}, "Finish, placement, checkpoint, and survival sources must produce exact round awards.")
+		and _expect(game.total_scores == {1: 6, 2: 3}, "Round awards must be added to cumulative match totals exactly once.")
+		and _expect(state.phase == RaceState.Phase.NEXT_ROUND, "A non-terminal scored round must stop at NEXT_ROUND.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_target_score_uses_highest_total_after_all_awards() -> bool:
+	var fixture := _create_game_fixture(3)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.total_scores = {1: 15, 2: 19}
+	state.finish_times = {1: 10.0, 2: 12.0}
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var passed := (
+		_expect(game.total_scores == {1: 21, 2: 23}, "All round awards must apply before simultaneous target evaluation.")
+		and _expect(game.winner_id == 2, "When both reach target, the higher cumulative total must beat current-round rank.")
+		and _expect(game.end_reason == "TARGET_SCORE", "A target-score victory must expose a stable textual end reason.")
+		and _expect(state.phase == RaceState.Phase.MATCH_END, "A resolved target winner must end the match.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_equal_target_totals_use_current_round_tie_order() -> bool:
+	var fixture := _create_game_fixture(2)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.total_scores = {1: 17, 2: 14}
+	state.finish_times = {2: 9.0}
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var passed := (
+		_expect(game.total_scores == {1: 20, 2: 20}, "The fixture must produce equal totals at or above the target.")
+		and _expect(game.winner_id == 2, "Equal target totals must select the better current-round rank, not stable id.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_round_five_uses_totals_then_current_round_tie_order() -> bool:
+	var fixture := _create_game_fixture(5)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.total_scores = {1: 7, 2: 4}
+	state.finish_times = {2: 20.0}
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var passed := (
+		_expect(game.total_scores == {1: 10, 2: 10}, "The fifth-round fixture must remain below target with equal cumulative totals.")
+		and _expect(game.winner_id == 2, "A fifth-round total tie must use the same current-round tie order.")
+		and _expect(game.end_reason == "MAX_ROUNDS", "A fifth-round decision must expose the maximum-round end reason.")
+		and _expect(state.phase == RaceState.Phase.MATCH_END, "The fifth scored round must end the match.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_finish_round_is_idempotent_and_rejects_invalid_phase() -> bool:
+	var fixture := _create_game_fixture(2)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	game.finish_round()
+	var before_valid: Dictionary = game.total_scores.duplicate()
+	state.finish_times = {1: 5.0}
+	state.phase = RaceState.Phase.RESULTS
+	game.finish_round()
+	var after_valid: Dictionary = game.total_scores.duplicate()
+	game.finish_round()
+	state.record_finish(2, 6.0)
+	var passed := (
+		_expect(before_valid == {1: 0, 2: 0}, "finish_round outside RESULTS must not award points.")
+		and _expect(after_valid == {1: 6, 2: 3}, "The one valid finish_round call must award the exact result once.")
+		and _expect(game.total_scores == after_valid, "Repeated finish_round and late terminal calls must be idempotent.")
+		and _expect(not state.finish_times.has(2), "Finish crossings after the results transition must be ignored.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_next_round_and_racing_reset_only_transient_round_state() -> bool:
+	var fixture := _create_game_fixture(1)
+	var game = fixture["game"]
+	var state = fixture["race_state"]
+	var tracker = fixture["tracker"]
+	var players: Dictionary = fixture["players"]
+	players[1].lose_life()
+	players[2].try_consume_boost()
+	tracker.claimed_checkpoints = {"checkpoint_1": 1}
+	tracker.activated_respawns_by_player[1] = {"respawn_1": true}
+	state.phase = RaceState.Phase.NEXT_ROUND
+	var initial_safe := Transform3D(Basis.IDENTITY, Vector3(4.0, 1.0, -3.0))
+	var advanced: bool = game.begin_next_round(initial_safe)
+	state.phase = RaceState.Phase.COUNTDOWN
+	var started: bool = game.start_racing(30.0)
+	var passed := (
+		_expect(advanced and state.round_number == 2 and state.phase == RaceState.Phase.RACING, "Next-round and racing APIs must advance through the explicit pre-race boundary.")
+		and _expect(players[1].lives == 3 and players[1].deaths == 0 and players[2].boost_charges == 1, "A new round must restore lives, deaths, and the one boost charge.")
+		and _expect(players[1].last_safe_respawn == initial_safe and players[2].last_safe_respawn == initial_safe, "Both players must reset to TrackStart's safe transform.")
+		and _expect(tracker.claimed_checkpoints.is_empty() and tracker.activated_respawns_by_player[1].is_empty(), "Starting RACING must reset checkpoint and respawn claims.")
+		and _expect(is_equal_approx(state.race_end_time, 150.0), "Starting RACING must establish the 120-second hard deadline.")
+	)
+	_free_game_fixture(fixture)
+	return passed
+
+func test_track_build_blocked_ends_once_without_race_awards() -> bool:
+	var race_state := RaceState.new()
+	race_state.begin_round(2)
+	var track_manager := TrackManager.new()
+	var build_manager := BuildManager.new(race_state, track_manager)
+	var players := {1: PlayerRoundState.new(), 2: PlayerRoundState.new()}
+	var tracker := ProgressTracker.new(null, players)
+	var game := GameController.new(race_state, tracker, players, build_manager)
+	game.total_scores = {1: 7, 2: 5}
+	var transitions: Array = []
+	race_state.phase_changed.connect(func(_previous: int, current: int) -> void: transitions.append(current))
+	build_manager.track_build_blocked.emit()
+	build_manager.track_build_blocked.emit()
+	var passed := (
+		_expect(game.total_scores == {1: 7, 2: 5} and game.current_round_scores.is_empty(), "A blocked unrun race must not fabricate scoring events.")
+		and _expect(game.winner_id == 1 and game.end_reason == "TRACK_BUILD_BLOCKED", "Blocked construction must end deterministically from existing totals.")
+		and _expect(transitions == [RaceState.Phase.RESULTS, RaceState.Phase.MATCH_END], "Blocked construction must pass through controlled RESULTS and MATCH_END exactly once.")
+	)
+	game.free()
+	build_manager.free()
+	track_manager.free()
+	return passed
+
+func _create_game_fixture(round_number: int) -> Dictionary:
+	var layout = TrackLayout.with_initial_straight()
+	var players := {1: PlayerRoundState.new(), 2: PlayerRoundState.new()}
+	players[1].reset_for_round()
+	players[2].reset_for_round()
+	var tracker := ProgressTracker.new(layout, players)
+	var race_state := RaceState.new()
+	race_state.begin_round(round_number)
+	var game := GameController.new(race_state, tracker, players)
+	return {"game": game, "race_state": race_state, "tracker": tracker, "players": players}
+
+func _free_game_fixture(fixture: Dictionary) -> void:
+	fixture["game"].free()
+
+func _ranked_ids(ranked: Array) -> Array:
+	var ids: Array = []
+	for result in ranked:
+		ids.append(result["id"])
+	return ids
 
 func test_piece_gates_reject_skips_duplicates_and_reverse_progress() -> bool:
 	var fixture := _create_progress_fixture(3)

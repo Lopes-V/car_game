@@ -26,7 +26,7 @@ func begin_round(next_round_number: int) -> void:
 	phase = Phase.BUILD_SECRET
 
 func begin_racing(now_seconds: float) -> void:
-	if phase == Phase.RACING:
+	if phase != Phase.COUNTDOWN:
 		return
 	phase = Phase.RACING
 	race_end_time = now_seconds + Constants.ROUND_TIME_SECONDS
@@ -51,17 +51,25 @@ func should_end_race(now_seconds: float) -> bool:
 	phase = Phase.RESULTS
 	return true
 
-func resolve_match(scores: Dictionary) -> int:
+func resolve_match(scores: Dictionary, tie_order: Array = []) -> int:
 	if phase != Phase.RESULTS and phase != Phase.MATCH_END:
 		return 0
 
-	var winner_id := 0
 	var highest_score := Constants.TARGET_SCORE - 1
+	var candidates: Array = []
 	for player_id in scores:
-		var score = scores[player_id]
-		if score >= Constants.TARGET_SCORE and score > highest_score:
+		var score: int = int(scores[player_id])
+		if score < Constants.TARGET_SCORE:
+			continue
+		if score > highest_score:
 			highest_score = score
-			winner_id = player_id
-		elif score >= Constants.TARGET_SCORE and score == highest_score:
-			winner_id = 0
-	return winner_id
+			candidates = [int(player_id)]
+		elif score == highest_score:
+			candidates.append(int(player_id))
+	if candidates.is_empty():
+		return 0
+	for player_id in tie_order:
+		if candidates.has(int(player_id)):
+			return int(player_id)
+	candidates.sort()
+	return int(candidates[0])

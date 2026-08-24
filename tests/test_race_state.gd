@@ -51,8 +51,9 @@ func run() -> bool:
 		and test_duplicate_finish_keeps_first_recorded_time()
 		and test_race_ends_at_deadline_and_enters_results()
 		and test_target_score_is_evaluated_only_after_results()
-		and test_equal_target_scores_remain_unresolved()
+		and test_equal_target_scores_use_stable_id_without_tie_order()
 		and test_repeated_begin_racing_keeps_original_deadline()
+		and test_begin_racing_accepts_only_countdown()
 		and test_finish_after_deadline_is_ignored()
 		and test_phase_changed_emits_only_for_real_transitions()
 		and test_begin_round_resets_round_state()
@@ -60,6 +61,7 @@ func run() -> bool:
 
 func test_first_finish_caps_final_window_at_hard_limit() -> bool:
 	var state := State.new()
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	state.record_finish(1, 119.0)
 	return (
@@ -69,6 +71,7 @@ func test_first_finish_caps_final_window_at_hard_limit() -> bool:
 
 func test_duplicate_finish_keeps_first_recorded_time() -> bool:
 	var state := State.new()
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	state.record_finish(1, 10.0)
 	state.record_finish(1, 11.0)
@@ -76,6 +79,7 @@ func test_duplicate_finish_keeps_first_recorded_time() -> bool:
 
 func test_race_ends_at_deadline_and_enters_results() -> bool:
 	var state := State.new()
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	return (
 		_expect(not state.should_end_race(119.9), "Race must continue before its deadline.")
@@ -87,6 +91,7 @@ func test_race_ends_at_deadline_and_enters_results() -> bool:
 func test_target_score_is_evaluated_only_after_results() -> bool:
 	var state := State.new()
 	state.begin_round(3)
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	if not _expect(state.resolve_match({1: 21, 2: 22}) == 0, "Scores must not resolve a match during RACING."):
 		return false
@@ -96,19 +101,37 @@ func test_target_score_is_evaluated_only_after_results() -> bool:
 		and _expect(state.resolve_match({1: 19, 2: 18}) == 0, "No match must resolve when neither score reaches target.")
 	)
 
-func test_equal_target_scores_remain_unresolved() -> bool:
+func test_equal_target_scores_use_stable_id_without_tie_order() -> bool:
 	var state := State.new()
 	state.phase = State.Phase.RESULTS
-	return _expect(state.resolve_match({1: 20, 2: 20}) == 0, "Equal target-reaching scores must remain unresolved.")
+	return _expect(state.resolve_match({2: 20, 1: 20}) == 1, "Equal target-reaching scores without tie order must use lower stable id.")
 
 func test_repeated_begin_racing_keeps_original_deadline() -> bool:
 	var state := State.new()
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	state.begin_racing(1.0)
 	return _expect(is_equal_approx(state.race_end_time, 120.0), "Repeated begin_racing must not move the hard deadline.")
 
+func test_begin_racing_accepts_only_countdown() -> bool:
+	var state := State.new()
+	state.begin_racing(10.0)
+	var build_rejected := state.phase == State.Phase.BUILD_SECRET and is_zero_approx(state.race_end_time)
+	for invalid_phase in [State.Phase.FINAL_WINDOW, State.Phase.RESULTS, State.Phase.MATCH_END]:
+		state.phase = invalid_phase
+		state.begin_racing(20.0)
+		if state.phase != invalid_phase or not is_zero_approx(state.race_end_time):
+			return _expect(false, "begin_racing must reject terminal and post-race phases.")
+	state.phase = State.Phase.COUNTDOWN
+	state.begin_racing(30.0)
+	return _expect(
+		build_rejected and state.phase == State.Phase.RACING and is_equal_approx(state.race_end_time, 150.0),
+		"begin_racing must accept exactly COUNTDOWN and establish its hard deadline.",
+	)
+
 func test_finish_after_deadline_is_ignored() -> bool:
 	var state := State.new()
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	state.record_finish(1, 120.1)
 	return (
@@ -120,22 +143,24 @@ func test_finish_after_deadline_is_ignored() -> bool:
 func test_phase_changed_emits_only_for_real_transitions() -> bool:
 	var observed_changes: Array[Dictionary] = []
 	var state := State.new()
+	state.begin_round(1)
+	state.phase = State.Phase.COUNTDOWN
 	state.phase_changed.connect(func(previous: int, current: int) -> void:
 		observed_changes.append({"previous": previous, "current": current})
 	)
-	state.begin_round(1)
 	state.begin_racing(0.0)
 	state.begin_racing(1.0)
 	state.record_finish(1, 10.0)
 	state.should_end_race(25.0)
 	return (
 		_expect(observed_changes.size() == 3, "phase_changed must emit only when the phase changes.")
-		and _expect(observed_changes[0] == {"previous": State.Phase.BUILD_SECRET, "current": State.Phase.RACING}, "RACING transition signal must carry old and new phases.")
+		and _expect(observed_changes[0] == {"previous": State.Phase.COUNTDOWN, "current": State.Phase.RACING}, "RACING transition signal must carry old and new phases.")
 		and _expect(observed_changes[2] == {"previous": State.Phase.FINAL_WINDOW, "current": State.Phase.RESULTS}, "RESULTS transition signal must carry old and new phases.")
 	)
 
 func test_begin_round_resets_round_state() -> bool:
 	var state := State.new()
+	state.phase = State.Phase.COUNTDOWN
 	state.begin_racing(0.0)
 	state.record_finish(1, 10.0)
 	state.begin_round(2)
