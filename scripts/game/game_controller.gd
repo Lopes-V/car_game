@@ -203,8 +203,10 @@ func _on_build_applied(success: bool) -> void:
 	_countdown_remaining = 3.0
 	_place_cars(_initial_safe_transform())
 	_bind_traps()
-	if not success and build_manager != null and not build_manager.last_trap_applied and hud != null:
-		hud.set_phase_text("MODIFICATION_FAILED - extensao mantida")
+	if hud != null:
+		hud.set_phase_text("COUNTDOWN")
+		if not success and build_manager != null and not build_manager.last_trap_applied:
+			hud.set_phase_text("COUNTDOWN - MODIFICATION_FAILED - extensao mantida")
 
 func _on_track_build_blocked() -> void:
 	if _terminal_handled:
@@ -274,9 +276,9 @@ func _on_modification_locked(trap_id: String, slot_ids: Array[String]) -> void:
 	elif hud != null:
 		hud.show_build_error("Construcao rejeitada: sao necessarios tres slots validos")
 
-func _on_choices_revealed(extension_id: String, trap_id: String) -> void:
+func _on_choices_revealed(extension_id: String, trap_id: String, slot_priorities: Array[String]) -> void:
 	if hud != null:
-		hud.show_reveal(extension_id, trap_id)
+		hud.show_reveal(extension_id, trap_id, slot_priorities)
 
 func _on_reveal_requested() -> void:
 	build_manager.apply_revealed()

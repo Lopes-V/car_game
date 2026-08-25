@@ -5,7 +5,7 @@ const BuildOption = preload("res://scripts/domain/build_choice.gd")
 const Constants = preload("res://scripts/domain/race_constants.gd")
 
 const ROAD_HEIGHT := 0.5
-const CURVE_SEGMENTS := 12
+const CURVE_SEGMENTS := BuildOption.CURVE_CENTERLINE_SEGMENTS
 const SAFE_ZONE_FRACTION := 0.12
 const TRAP_SLOT_FRACTIONS := [0.4, 0.6, 0.8]
 
@@ -33,12 +33,8 @@ func get_trap_slots() -> Array:
 
 func _configure_progress_path() -> void:
 	var curve := Curve3D.new()
-	if option.variant_id == "curve_left" or option.variant_id == "curve_right":
-		for segment_index in range(CURVE_SEGMENTS + 1):
-			curve.add_point(_path_position(float(segment_index) / CURVE_SEGMENTS))
-	else:
-		curve.add_point(Vector3.ZERO)
-		curve.add_point(_local_output_transform().origin)
+	for centerline_point in option.centerline_points:
+		curve.add_point(centerline_point)
 	get_node("ProgressPath").curve = curve
 
 func _configure_road_geometry() -> void:

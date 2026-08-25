@@ -13,6 +13,7 @@ const RIGHT_TURN_BASIS := Basis(
 	Vector3.UP,
 	Vector3(-1.0, 0.0, 0.0),
 )
+const CURVE_CENTERLINE_SEGMENTS := 12
 
 var variant_id: String
 var allows_checkpoint: bool
@@ -20,6 +21,7 @@ var transform: Transform3D
 var output_transform: Transform3D
 var length_meters: float
 var footprint: AABB
+var centerline_points: PackedVector3Array
 
 func _init(
 	requested_variant_id: String,
@@ -30,8 +32,9 @@ func _init(
 	variant_id = requested_variant_id
 	allows_checkpoint = checkpoint_allowed
 	transform = input_transform
-	length_meters = _variant_length(requested_variant_id)
 	output_transform = input_transform * _local_output_transform(requested_variant_id)
+	centerline_points = _local_centerline_points(requested_variant_id)
+	length_meters = _centerline_length(centerline_points)
 	footprint = _transform_aabb(_local_footprint(requested_variant_id), input_transform)
 
 static func _is_supported_variant(candidate_id: String) -> bool:
@@ -40,10 +43,27 @@ static func _is_supported_variant(candidate_id: String) -> bool:
 			return true
 	return false
 
-static func _variant_length(candidate_id: String) -> float:
+static func _local_centerline_points(candidate_id: String) -> PackedVector3Array:
+	var points := PackedVector3Array()
 	if candidate_id == "curve_left" or candidate_id == "curve_right":
-		return PI * Constants.TRACK_CURVE_RADIUS_METERS * 0.5
-	return Constants.TRACK_PIECE_LENGTH_METERS
+		for segment_index in range(CURVE_CENTERLINE_SEGMENTS + 1):
+			var angle := float(segment_index) / CURVE_CENTERLINE_SEGMENTS * PI * 0.5
+			var horizontal := Constants.TRACK_CURVE_RADIUS_METERS * (1.0 - cos(angle))
+			points.append(Vector3(
+				-horizontal if candidate_id == "curve_left" else horizontal,
+				0.0,
+				-Constants.TRACK_CURVE_RADIUS_METERS * sin(angle),
+			))
+		return points
+	points.append(Vector3.ZERO)
+	points.append(_local_output_transform(candidate_id).origin)
+	return points
+
+static func _centerline_length(points: PackedVector3Array) -> float:
+	var total := 0.0
+	for point_index in range(1, points.size()):
+		total += points[point_index - 1].distance_to(points[point_index])
+	return total
 
 static func _local_output_transform(candidate_id: String) -> Transform3D:
 	match candidate_id:

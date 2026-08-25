@@ -14,8 +14,10 @@ static func rank(results: Array) -> Array:
 		var b_finished: bool = float(b.get("finish_time", -1.0)) >= 0.0
 		if a_finished != b_finished:
 			return a_finished
-		if a_finished and not is_equal_approx(float(a["finish_time"]), float(b["finish_time"])):
-			return float(a["finish_time"]) < float(b["finish_time"])
+		if a_finished:
+			if not is_equal_approx(float(a["finish_time"]), float(b["finish_time"])):
+				return float(a["finish_time"]) < float(b["finish_time"])
+			return int(a["id"]) < int(b["id"])
 		if not is_equal_approx(float(a.get("progress", 0.0)), float(b.get("progress", 0.0))):
 			return float(a.get("progress", 0.0)) > float(b.get("progress", 0.0))
 		return int(a["id"]) < int(b["id"])

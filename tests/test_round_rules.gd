@@ -25,6 +25,7 @@ func run() -> bool:
 	all_passed = test_invalid_control_state_clears_active_boost() and all_passed
 	all_passed = test_controller_round_reset_clears_runtime_and_domain_state() and all_passed
 	all_passed = test_active_boost_increases_and_preserves_coasting_speed() and all_passed
+	all_passed = test_ice_creates_greater_velocity_heading_misalignment_without_life_loss() and all_passed
 	all_passed = test_shared_car_scene_has_body_collision_and_player_color() and all_passed
 	all_passed = test_split_screen_binds_two_targets_to_shared_world_viewports() and all_passed
 	all_passed = test_piece_gates_reject_skips_duplicates_and_reverse_progress() and all_passed
@@ -38,7 +39,7 @@ func run() -> bool:
 	all_passed = test_all_dead_recovery_excludes_eliminated_players() and all_passed
 	all_passed = await test_area_triggers_receive_real_body_entered_events() and all_passed
 	all_passed = test_finishers_rank_before_dnfs_and_finish_time_wins() and all_passed
-	all_passed = test_exact_rank_ties_use_progress_then_stable_id() and all_passed
+	all_passed = test_equal_finish_times_use_stable_id_for_round_points() and all_passed
 	all_passed = test_dnfs_rank_by_progress_then_stable_id() and all_passed
 	all_passed = test_score_results_awards_every_source() and all_passed
 	all_passed = test_bare_id_score_fixture_remains_compatible() and all_passed
@@ -61,7 +62,7 @@ func test_equal_target_tie_uses_progress_after_equivalent_placement() -> bool:
 	var fixture := _create_game_fixture(3)
 	var game = fixture["game"]
 	var state = fixture["race_state"]
-	game.total_scores = {1: 16, 2: 14}
+	game.total_scores = {1: 14, 2: 16}
 	state.finish_times = {1: 10.0, 2: 10.0}
 	fixture["tracker"].high_water_progress_by_player = {1: 70.0, 2: 80.0}
 	state.phase = RaceState.Phase.RESULTS
@@ -194,15 +195,15 @@ func test_finishers_rank_before_dnfs_and_finish_time_wins() -> bool:
 		"Finishers must precede DNFs, with lower finish time winning among finishers.",
 	)
 
-func test_exact_rank_ties_use_progress_then_stable_id() -> bool:
+func test_equal_finish_times_use_stable_id_for_round_points() -> bool:
 	var ranked := ScoreManager.rank([
-		{"id": 3, "finish_time": 10.0, "progress": 50.0},
-		{"id": 2, "finish_time": 10.0, "progress": 60.0},
-		{"id": 1, "finish_time": 10.0, "progress": 60.0},
+		{"id": 2, "finish_time": 10.0, "progress": 99.0},
+		{"id": 1, "finish_time": 10.0, "progress": 10.0},
 	])
-	return _expect(
-		_ranked_ids(ranked) == [1, 2, 3],
-		"Equal finish times must use higher meter progress, then lower stable id.",
+	var scores := ScoreManager.score_results(ranked, {}, {1: 1, 2: 1})
+	return (
+		_expect(_ranked_ids(ranked) == [1, 2], "Equal valid finish times must rank lower stable id immediately, regardless of progress.")
+		and _expect(scores == {1: 5, 2: 3}, "Stable-id round classification must award P1 first-place plus finish and P2 second-place plus finish.")
 	)
 
 func test_dnfs_rank_by_progress_then_stable_id() -> bool:
@@ -873,6 +874,44 @@ func test_active_boost_increases_and_preserves_coasting_speed() -> bool:
 		and _expect(stayed_boosted_and_capped, "Boost must preserve stronger forward motion for two seconds without exceeding its 1.6x cap.")
 		and _expect(full_duration_elapsed and normal_coasting_resumed, "Normal coasting deceleration must resume after the two-second boost expires.")
 	)
+
+func test_ice_creates_greater_velocity_heading_misalignment_without_life_loss() -> bool:
+	var normal := _steering_trajectory_sample(false)
+	var ice := _steering_trajectory_sample(true)
+	return (
+		_expect(
+			ice["misalignment"] > normal["misalignment"] + 0.04,
+			"Identical steering must leave at least 0.04 rad more velocity-heading misalignment on ice; normal=%.6f ice=%.6f." % [normal["misalignment"], ice["misalignment"]],
+		)
+		and _expect(
+			normal["lives"] == 3 and ice["lives"] == 3 and normal["deaths"] == 0 and ice["deaths"] == 0,
+			"Normal and ice steering trajectories must not consume life or record death.",
+		)
+	)
+
+func _steering_trajectory_sample(low_grip: bool) -> Dictionary:
+	var fixture := _create_car_fixture(1, "p1")
+	var car = fixture["car"]
+	var state = fixture["state"]
+	car.velocity = Vector3(0.0, 0.0, -12.0)
+	if low_grip:
+		car.apply_low_grip()
+	Input.action_press("p1_right")
+	for _step in 4:
+		car._physics_process(0.1)
+	Input.action_release("p1_right")
+	var horizontal_velocity := Vector3(car.velocity.x, 0.0, car.velocity.z).normalized()
+	var heading: Vector3 = car.global_basis * Vector3.FORWARD
+	heading.y = 0.0
+	heading = heading.normalized()
+	var result := {
+		"misalignment": horizontal_velocity.angle_to(heading),
+		"position": car.global_position,
+		"lives": state.lives,
+		"deaths": state.deaths,
+	}
+	_free_fixture(fixture)
+	return result
 
 func test_shared_car_scene_has_body_collision_and_player_color() -> bool:
 	var packed_scene := load("res://scenes/car/car.tscn") as PackedScene

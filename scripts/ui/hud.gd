@@ -62,10 +62,17 @@ func show_build_state(builder_id: int, modifier_id: int, option_ids: Array[Strin
 	countdown_label.visible = false
 	lock_button.disabled = option_ids.is_empty()
 
-func show_reveal(extension_id: String, trap_id: String) -> void:
+func show_reveal(extension_id: String, trap_id: String, slot_priorities: Array[String]) -> void:
 	build_panel.visible = false
 	reveal_panel.visible = true
-	reveal_label.text = "Revelado: %s + %s" % [extension_id, trap_id]
+	var priority_lines: Array[String] = []
+	for priority_index in slot_priorities.size():
+		priority_lines.append("%d. %s" % [priority_index + 1, slot_priorities[priority_index]])
+	reveal_label.text = "Revelado:\nExtensao: %s\nArmadilha: %s\nPrioridades:\n%s" % [
+		extension_id,
+		trap_id,
+		"\n".join(priority_lines),
+	]
 	reveal_button.disabled = false
 
 func show_countdown(seconds_remaining: float) -> void:

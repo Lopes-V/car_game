@@ -13,6 +13,25 @@ func run() -> bool:
 	all_passed = test_extension_stores_canonical_snapshot_not_caller_option() and all_passed
 	all_passed = test_near_match_and_stale_options_are_rejected() and all_passed
 	all_passed = test_both_curves_have_continuous_outer_collision_and_forward_gate() and all_passed
+	all_passed = test_every_runtime_progress_path_matches_authoritative_length() and all_passed
+	return all_passed
+
+func test_every_runtime_progress_path_matches_authoritative_length() -> bool:
+	var all_passed := true
+	for variant_id in ["straight", "curve_left", "curve_right", "uphill"]:
+		var fixture := _create_manager_fixture()
+		var manager = fixture["manager"]
+		manager.create_initial_track()
+		var offered = _find_option(manager.layout.get_valid_options(), variant_id)
+		var applied: bool = offered != null and manager.apply_extension(offered)
+		var runtime_piece = manager.get_piece(1)
+		var authoritative_length: float = manager.layout.pieces[1].length_meters if manager.layout.pieces.size() > 1 else -1.0
+		var baked_length: float = runtime_piece.get_node("ProgressPath").curve.get_baked_length() if runtime_piece != null else -2.0
+		all_passed = _expect(
+			applied and absf(baked_length - authoritative_length) < 0.0001,
+			"%s runtime baked length %.6f must equal authoritative length %.6f meters." % [variant_id, baked_length, authoritative_length],
+		) and all_passed
+		_free_fixture(fixture)
 	return all_passed
 
 func test_initial_track_has_one_piece_and_persistent_finish() -> bool:

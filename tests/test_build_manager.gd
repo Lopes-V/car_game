@@ -26,7 +26,7 @@ func test_reveal_stays_durable_until_explicit_apply() -> bool:
 	var state = fixture["race_state"]
 	var track = fixture["track_manager"]
 	var revealed: Array = []
-	manager.choices_revealed.connect(func(extension_id: String, trap_id: String) -> void: revealed.append([extension_id, trap_id]))
+	manager.choices_revealed.connect(func(extension_id: String, trap_id: String, slot_priorities: Array[String]) -> void: revealed.append([extension_id, trap_id, slot_priorities]))
 	manager.begin_secret_phase(1)
 	manager.submit_extension(1, "straight")
 	manager.submit_modification(2, "ice", _initial_slot_ids())
@@ -34,7 +34,7 @@ func test_reveal_stays_durable_until_explicit_apply() -> bool:
 	var durable_reveal := (
 		_expect(reveal_ok and state.phase == RaceState.Phase.REVEAL, "Locked choices must enter and remain in REVEAL before application.")
 		and _expect(track.layout.pieces.size() == 1 and _slot(track, "piece_0_slot_0").get_child_count() == 0, "REVEAL must not mutate track geometry or trap slots.")
-		and _expect(revealed == [["straight", "ice"]], "REVEAL must expose both choices exactly once.")
+		and _expect(revealed == [["straight", "ice", _initial_slot_ids()]], "REVEAL must expose extension, trap, and ordered slot priorities exactly once.")
 		and _expect(not manager.reveal_choices(), "A durable reveal cannot be emitted twice.")
 	)
 	var apply_ok: bool = manager.apply_revealed()
@@ -89,8 +89,8 @@ func test_roles_alternate_and_choices_stay_secret_until_reveal() -> bool:
 	var revealed_choices: Array[Dictionary] = []
 	odd_manager.choice_locked.connect(func(player_id: int) -> void: locked_players.append(player_id))
 	odd_manager.choices_revealed.connect(
-		func(extension_id: String, trap_id: String) -> void:
-			revealed_choices.append({"extension_id": extension_id, "trap_id": trap_id})
+		func(extension_id: String, trap_id: String, slot_priorities: Array[String]) -> void:
+			revealed_choices.append({"extension_id": extension_id, "trap_id": trap_id, "slot_priorities": slot_priorities})
 	)
 	var began: bool = odd_manager.begin_secret_phase(1)
 	var odd_roles_passed := (
@@ -103,7 +103,7 @@ func test_roles_alternate_and_choices_stay_secret_until_reveal() -> bool:
 		and _expect(revealed_choices.is_empty(), "Secret choice signals must not expose either choice before REVEAL.")
 		and _expect(odd_manager.reveal_and_apply(), "Both valid odd-round choices must reveal and apply.")
 		and _expect(odd_state.phase == RaceState.Phase.APPLY_BUILD, "A completed reveal must leave RaceState in APPLY_BUILD.")
-		and _expect(revealed_choices == [{"extension_id": "straight", "trap_id": "ice"}], "REVEAL must expose both choices together exactly once.")
+		and _expect(revealed_choices == [{"extension_id": "straight", "trap_id": "ice", "slot_priorities": _initial_slot_ids()}], "REVEAL must expose the complete ordered choice together exactly once.")
 		and _expect(not odd_manager.submit_extension(1, "curve_left"), "Extension changes must be locked after REVEAL.")
 		and _expect(not odd_manager.submit_modification(2, "dynamite", _initial_slot_ids()), "Modification changes must be locked after REVEAL.")
 	)
@@ -221,6 +221,12 @@ func test_submitted_priority_list_is_isolated_from_caller_mutation() -> bool:
 	manager.begin_secret_phase(1)
 	manager.submit_extension(1, "straight")
 	var caller_priorities: Array[String] = _initial_slot_ids()
+	var emitted_payloads: Array = []
+	manager.choices_revealed.connect(
+		func(_extension_id: String, _trap_id: String, priorities: Array[String]) -> void:
+			emitted_payloads.append(priorities.duplicate(true))
+			priorities[0] = "piece_88_slot_0"
+	)
 	var submitted: bool = manager.submit_modification(2, "ice", caller_priorities)
 	caller_priorities[0] = "piece_99_slot_0"
 	caller_priorities.reverse()
@@ -228,6 +234,7 @@ func test_submitted_priority_list_is_isolated_from_caller_mutation() -> bool:
 	var first_slot: Marker3D = _slot(track, "piece_0_slot_0")
 	var passed := (
 		_expect(submitted and applied, "A valid copied priority list must remain applicable.")
+		and _expect(emitted_payloads == [_initial_slot_ids()], "REVEAL must emit the original ordered priority snapshot.")
 		and _expect(first_slot != null and first_slot.get_meta("occupied", false) == true, "Mutating the caller array must not change the stored first priority.")
 	)
 	_free_fixture(fixture)

@@ -11,7 +11,7 @@ const TRAP_SCENES := {
 }
 
 signal choice_locked(player_id: int)
-signal choices_revealed(extension_id: String, trap_id: String)
+signal choices_revealed(extension_id: String, trap_id: String, slot_priorities: Array[String])
 signal build_applied(success: bool)
 signal track_build_blocked()
 
@@ -94,7 +94,7 @@ func reveal_choices() -> bool:
 		return false
 
 	race_state.phase = RaceState.Phase.REVEAL
-	choices_revealed.emit(_extension_choice.variant_id, _trap_choice)
+	choices_revealed.emit(_extension_choice.variant_id, _trap_choice, _slot_priorities.duplicate(true))
 	return true
 
 func apply_revealed() -> bool:

@@ -5,6 +5,7 @@ const RaceState = preload("res://scripts/domain/race_state.gd")
 func run() -> bool:
 	var all_passed := true
 	all_passed = await test_main_scene_boots_real_secret_build_flow() and all_passed
+	all_passed = await test_reveal_renders_immutable_ordered_slot_priorities() and all_passed
 	all_passed = await test_real_ui_builds_counts_down_scores_and_alternates_roles() and all_passed
 	all_passed = await test_finish_gate_records_once_and_stops_finisher() and all_passed
 	all_passed = await test_runtime_traps_and_saved_respawn_move_real_car() and all_passed
@@ -20,6 +21,29 @@ func run() -> bool:
 	all_passed = await test_initial_track_build_blocked_result_is_not_overwritten() and all_passed
 	all_passed = await test_composed_finish_and_trap_receive_real_body_entered() and all_passed
 	return all_passed
+
+func test_reveal_renders_immutable_ordered_slot_priorities() -> bool:
+	var fixture := await _instantiate_main()
+	var main = fixture["main"]
+	var game = main.get_node("GameController")
+	var hud = main.get_node("HUD")
+	var priorities: Array[String] = ["piece_0_slot_2", "piece_0_slot_0", "piece_0_slot_1"]
+	var extension_locked: bool = game.build_manager.submit_extension(1, "straight")
+	var modification_locked: bool = game.build_manager.submit_modification(2, "dynamite", priorities)
+	var revealed: bool = game.build_manager.reveal_choices()
+	var reveal_label: Label = hud.get_node("Overlay/RevealPanel/VBox/RevealLabel")
+	var expected := "Revelado:\nExtensao: straight\nArmadilha: dynamite\nPrioridades:\n1. piece_0_slot_2\n2. piece_0_slot_0\n3. piece_0_slot_1"
+	var text_before_mutation: String = reveal_label.text
+	priorities[0] = "piece_99_slot_0"
+	priorities.reverse()
+	await fixture["tree"].process_frame
+	var passed := (
+		_expect(extension_locked and modification_locked and revealed, "The composed reveal fixture must accept and reveal both locked choices.")
+		and _expect(hud.get_node("Overlay/RevealPanel").visible and text_before_mutation == expected, "REVEAL must visibly render extension, trap, and all three ordered priorities before apply; got %s." % text_before_mutation)
+		and _expect(reveal_label.text == expected, "Mutating the original submitted array must not alter the visible revealed choice; got %s." % reveal_label.text)
+	)
+	await _free_main(fixture)
+	return passed
 
 func test_main_scene_boots_real_secret_build_flow() -> bool:
 	var packed := load("res://scenes/main/main.tscn") as PackedScene
@@ -70,6 +94,7 @@ func test_real_ui_builds_counts_down_scores_and_alternates_roles() -> bool:
 	hud.get_node("Overlay/RevealPanel/VBox/RevealButton").pressed.emit()
 	var build_passed := (
 		_expect(game.race_state.phase == RaceState.Phase.COUNTDOWN, "Explicit reveal apply must enter COUNTDOWN.")
+		and _expect(hud.get_node("Overlay/PhaseLabel").text == "COUNTDOWN", "A normal build must replace the large BUILD_SECRET phase label with COUNTDOWN.")
 		and _expect(track.layout.pieces.size() == 2, "The first UI build must append exactly one canonical extension.")
 		and _expect(not track.finish.global_transform.is_equal_approx(original_finish), "Applying the UI extension must move the persistent finish.")
 		and _expect(_installed_trap_count(track) == 1, "The modifier UI must install one trap in a phase-start slot.")

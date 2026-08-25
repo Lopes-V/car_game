@@ -9,6 +9,7 @@ const PlayerState = preload("res://scripts/domain/player_round_state.gd")
 @export var forward_speed := 28.0
 @export var steering_speed := 1.8
 @export var lateral_damping := 8.0
+@export_range(0.0, 1.0, 0.05) var low_grip_lateral_damping_multiplier := 0.2
 @export var coasting_deceleration := 6.0
 @export var boost_duration := 2.0
 @export var boost_multiplier := 1.6
@@ -98,7 +99,8 @@ func _physics_process(delta: float) -> void:
 		var travel_direction := signf(forward_velocity)
 		rotate_y(-steer_input * steering_speed * travel_direction * delta)
 
-	var current_lateral_damping := lateral_damping * (0.2 if low_grip_time_remaining > 0.0 else 1.0)
+	local_velocity = global_transform.basis.inverse() * velocity
+	var current_lateral_damping := lateral_damping * (low_grip_lateral_damping_multiplier if low_grip_time_remaining > 0.0 else 1.0)
 	local_velocity.x = move_toward(local_velocity.x, 0.0, current_lateral_damping * delta)
 	local_velocity.z = -forward_velocity
 	velocity = global_transform.basis * local_velocity

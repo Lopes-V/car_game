@@ -29,7 +29,8 @@ func test_build_option_constructor_fully_initializes_geometry() -> bool:
 		and _expect(option.allows_checkpoint, "A build option must preserve checkpoint eligibility.")
 		and _expect(option.transform == Transform3D.IDENTITY, "A default build option must start at the identity transform.")
 		and _expect(option.output_transform.origin.is_equal_approx(Vector3(0.0, 5.0, -20.0)), "A build option must initialize its output transform.")
-		and _expect(is_equal_approx(option.length_meters, 20.0), "A build option must initialize its path length.")
+		and _expect(is_equal_approx(option.length_meters, 20.6155), "An uphill build option must use the hand-derived sqrt(20^2 + 5^2) centerline length.")
+		and _expect(option.centerline_points == PackedVector3Array([Vector3.ZERO, Vector3(0.0, 5.0, -20.0)]), "An uphill build option must retain its pure ordered centerline points.")
 		and _expect(option.footprint.has_volume(), "A build option must initialize a collision footprint.")
 	)
 
@@ -81,9 +82,10 @@ func test_curve_options_have_expected_end_connectors_and_lengths() -> bool:
 		and _expect((left.output_transform.basis * Vector3.FORWARD).is_equal_approx(Vector3.LEFT), "A left curve output must face local left.")
 		and _expect(right.output_transform.origin.is_equal_approx(Vector3(20.0, 0.0, -40.0)), "A right curve must end 20 meters right and forward.")
 		and _expect((right.output_transform.basis * Vector3.FORWARD).is_equal_approx(Vector3.RIGHT), "A right curve output must face local right.")
-		and _expect(is_equal_approx(left.length_meters, PI * 10.0), "A quarter curve with radius 20 must have PI * 10 meters of path.")
+		and _expect(is_equal_approx(left.length_meters, 31.3935), "A 12-chord quarter curve of radius 20 must use its hand-derived 31.3935-meter centerline length.")
+		and _expect(left.centerline_points.size() == 13, "A quarter curve centerline must contain both endpoints of its 12 ordered chords.")
 		and _expect(uphill.output_transform.origin.is_equal_approx(Vector3(0.0, 5.0, -40.0)), "An uphill must rise 5 meters over its 20-meter run.")
-		and _expect(is_equal_approx(uphill.length_meters, 20.0), "An uphill path must use the specified 20-meter logical length.")
+		and _expect(is_equal_approx(uphill.length_meters, 20.6155), "An uphill path must include both its 20-meter run and 5-meter rise.")
 	)
 
 func test_option_that_intersects_existing_piece_is_not_offered() -> bool:
