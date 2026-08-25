@@ -11,7 +11,7 @@ if (Test-Path -LiteralPath $localGodot -PathType Leaf) {
 }
 
 $programFilesCandidates = @(
-    Get-ChildItem -Path "C:\Program Files\Godot\Godot*_console.exe" -File -ErrorAction SilentlyContinue,
+    Get-ChildItem -Path "C:\Program Files\Godot\Godot*_console.exe" -File -ErrorAction SilentlyContinue
     Get-ChildItem -Path "C:\Program Files\Godot Engine\Godot*_console.exe" -File -ErrorAction SilentlyContinue
 )
 
