@@ -55,7 +55,8 @@ func _ready() -> void:
 	hud.continue_requested.connect(_on_continue_requested)
 	start_match()
 	_place_cars(Transform3D.IDENTITY)
-	_show_build_hud()
+	if race_state.phase == RaceState.Phase.BUILD_SECRET and not _terminal_handled:
+		_show_build_hud()
 
 func _process(delta: float) -> void:
 	if race_state.phase == RaceState.Phase.COUNTDOWN:
@@ -66,22 +67,26 @@ func _process(delta: float) -> void:
 			start_racing(Time.get_ticks_msec() / 1000.0)
 			_set_car_controls(true)
 	elif race_state.phase == RaceState.Phase.RACING or race_state.phase == RaceState.Phase.FINAL_WINDOW:
-		var now := Time.get_ticks_msec() / 1000.0
-		_update_runtime_progress()
-		_check_kill_plane()
-		if race_state.phase != RaceState.Phase.RACING and race_state.phase != RaceState.Phase.FINAL_WINDOW:
-			return
-		if hud != null:
-			hud.show_race_state(
-				"RACING" if race_state.phase == RaceState.Phase.RACING else "FINAL_WINDOW",
-				race_state.race_end_time - now,
-				player_states,
-				total_scores,
-			)
-		if race_state.should_end_race(now):
-			_set_car_controls(false)
-			finish_round()
-			_show_results()
+		update_race(Time.get_ticks_msec() / 1000.0)
+
+func update_race(now_seconds: float) -> bool:
+	if race_state.phase != RaceState.Phase.RACING and race_state.phase != RaceState.Phase.FINAL_WINDOW:
+		return false
+	_update_runtime_progress()
+	_check_kill_plane()
+	if race_state.phase != RaceState.Phase.RACING and race_state.phase != RaceState.Phase.FINAL_WINDOW:
+		return true
+	if hud != null:
+		hud.show_race_state(
+			"RACING" if race_state.phase == RaceState.Phase.RACING else "FINAL_WINDOW",
+			race_state.race_end_time - now_seconds,
+			player_states,
+			total_scores,
+		)
+	if race_state.should_end_race(now_seconds):
+		_set_car_controls(false)
+		finish_round()
+	return true
 
 func _init(
 	configured_race_state = null,
@@ -187,15 +192,19 @@ func handle_track_build_blocked() -> void:
 
 func _on_build_applied(success: bool) -> void:
 	if (
-		not success
-		or _terminal_handled
+		_terminal_handled
 		or race_state.phase != RaceState.Phase.APPLY_BUILD
 	):
+		return
+	if build_manager != null and not build_manager.last_extension_applied:
+		_on_track_build_blocked()
 		return
 	race_state.phase = RaceState.Phase.COUNTDOWN
 	_countdown_remaining = 3.0
 	_place_cars(_initial_safe_transform())
 	_bind_traps()
+	if not success and build_manager != null and not build_manager.last_trap_applied and hud != null:
+		hud.set_phase_text("MODIFICATION_FAILED - extensao mantida")
 
 func _on_track_build_blocked() -> void:
 	if _terminal_handled:
@@ -261,7 +270,7 @@ func _on_extension_locked(option_id: String) -> void:
 
 func _on_modification_locked(trap_id: String, slot_ids: Array[String]) -> void:
 	if build_manager.submit_modification(build_manager.modifier_player_id, trap_id, slot_ids):
-		build_manager.reveal_and_apply()
+		build_manager.reveal_choices()
 	elif hud != null:
 		hud.show_build_error("Construcao rejeitada: sao necessarios tres slots validos")
 
@@ -270,7 +279,7 @@ func _on_choices_revealed(extension_id: String, trap_id: String) -> void:
 		hud.show_reveal(extension_id, trap_id)
 
 func _on_reveal_requested() -> void:
-	build_manager.reveal_and_apply()
+	build_manager.apply_revealed()
 
 func _on_continue_requested() -> void:
 	if begin_next_round(_initial_safe_transform()):

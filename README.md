@@ -7,7 +7,7 @@ Protótipo local para duas pessoas feito em Godot 4. A pista linear cresce a cad
 1. Abra `project.godot` no Godot 4 ou execute o projeto pela linha de comando.
 2. Na tela de construção, o jogador indicado escolhe uma extensão e trava a escolha.
 3. Passe o controle ao outro jogador. Ele escolhe a armadilha e três slots diferentes em ordem de preferência, então trava a escolha.
-4. Após a revelação e a contagem de três segundos, os dois jogadores correm em tela dividida.
+4. As duas escolhas permanecem visíveis na fase de revelação. Confirme em **APLICAR E CORRER**; somente então a pista é alterada e começa a contagem de três segundos.
 5. Na tela de resultados, use **PRÓXIMA RODADA** para continuar. Uma partida encerrada não reinicia automaticamente a pista acumulada.
 
 ### Controles
@@ -26,6 +26,7 @@ Cada jogador recebe três vidas e uma carga de boost no início de cada rodada. 
 - A corrida dura no máximo 120 segundos.
 - O primeiro carro a terminar abre uma janela final de 15 segundos.
 - Gelo reduz temporariamente a aderência; dinamite remove uma vida e dispara uma vez por corrida.
+- Se a extensão for aplicada mas os três slots de armadilha ficarem indisponíveis, a extensão permanece, o HUD informa a falha da modificação e a corrida continua. Uma extensão invalidada encerra a partida de forma controlada.
 - Um carro morto reaparece no próprio último ponto seguro quando o adversário ativa um ponto de respawn.
 - Se todos estiverem mortos, quem ainda tiver vidas reaparece automaticamente.
 - A classificação usa chegada e, para quem não chegou, o progresso em metros ao longo da cadeia lógica da pista.

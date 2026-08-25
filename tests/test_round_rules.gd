@@ -51,7 +51,7 @@ func run() -> bool:
 	all_passed = test_next_round_and_racing_reset_only_transient_round_state() and all_passed
 	all_passed = test_track_build_blocked_ends_once_without_race_awards() and all_passed
 	all_passed = test_real_round_one_build_flow_reaches_racing_without_phase_shortcuts() and all_passed
-	all_passed = test_failed_build_application_does_not_start_countdown() and all_passed
+	all_passed = test_failed_modification_keeps_extension_and_starts_countdown() and all_passed
 	all_passed = test_equal_target_tie_uses_progress_after_equivalent_placement() and all_passed
 	all_passed = test_equal_target_tie_uses_fewer_deaths_after_equal_progress() and all_passed
 	all_passed = test_equal_target_tie_uses_stable_id_after_exact_round_tie() and all_passed
@@ -129,7 +129,7 @@ func test_real_round_one_build_flow_reaches_racing_without_phase_shortcuts() -> 
 	_free_real_build_game_fixture(fixture)
 	return passed
 
-func test_failed_build_application_does_not_start_countdown() -> bool:
+func test_failed_modification_keeps_extension_and_starts_countdown() -> bool:
 	var fixture := _create_real_build_game_fixture()
 	var game = fixture["game"]
 	var state = fixture["race_state"]
@@ -145,8 +145,8 @@ func test_failed_build_application_does_not_start_countdown() -> bool:
 	var racing_started: bool = game.start_racing(5.0)
 	var passed := (
 		_expect(not applied, "The real fixture must fail when all phase-snapshot trap preferences become occupied.")
-		and _expect(state.phase == RaceState.Phase.APPLY_BUILD, "A failed build application must remain outside COUNTDOWN.")
-		and _expect(not racing_started and is_zero_approx(state.race_end_time), "A failed application must not permit RACING or create a deadline.")
+		and _expect(build.last_extension_applied and not build.last_trap_applied, "The partial result must retain the extension and report only trap failure.")
+		and _expect(racing_started and state.phase == RaceState.Phase.RACING, "A failed modification after a valid extension must continue through COUNTDOWN into RACING.")
 	)
 	_free_real_build_game_fixture(fixture)
 	return passed

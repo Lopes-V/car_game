@@ -83,6 +83,7 @@ func show_race_state(phase_name: String, seconds_remaining: float, states: Dicti
 func show_results(order: Array, awards: Dictionary, scores: Dictionary, winner_id: int, reason: String, can_continue: bool) -> void:
 	_hide_phase_panels()
 	results_panel.visible = true
+	phase_label.text = "NEXT_ROUND - RESULTS" if can_continue else "MATCH_END - %s" % reason
 	var lines: Array[String] = []
 	if reason == "TRACK_BUILD_BLOCKED":
 		lines.append("TRACK_BUILD_BLOCKED")

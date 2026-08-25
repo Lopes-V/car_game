@@ -19,6 +19,8 @@ var race_state: RaceState
 var track_manager: TrackManager
 var builder_player_id := 0
 var modifier_player_id := 0
+var last_extension_applied := false
+var last_trap_applied := false
 
 var _phase_started := false
 var _option_snapshot: Dictionary = {}
@@ -33,6 +35,8 @@ func _init(configured_race_state: RaceState, configured_track_manager: TrackMana
 
 func begin_secret_phase(round_number: int) -> bool:
 	_clear_secret_choices()
+	last_extension_applied = false
+	last_trap_applied = false
 	_phase_started = false
 	if race_state == null or track_manager == null or track_manager.layout == null:
 		return false
@@ -80,7 +84,7 @@ func submit_modification(player_id: int, trap_id: String, preferred_slot_ids: Ar
 	choice_locked.emit(player_id)
 	return true
 
-func reveal_and_apply() -> bool:
+func reveal_choices() -> bool:
 	if (
 		not _phase_started
 		or race_state.phase != RaceState.Phase.BUILD_SECRET
@@ -91,14 +95,27 @@ func reveal_and_apply() -> bool:
 
 	race_state.phase = RaceState.Phase.REVEAL
 	choices_revealed.emit(_extension_choice.variant_id, _trap_choice)
+	return true
+
+func apply_revealed() -> bool:
+	if (
+		not _phase_started
+		or race_state.phase != RaceState.Phase.REVEAL
+		or _extension_choice == null
+		or _trap_choice.is_empty()
+	):
+		return false
 	race_state.phase = RaceState.Phase.APPLY_BUILD
 	_phase_started = false
 
-	var extension_applied := track_manager.apply_extension(_extension_choice)
-	var trap_applied := extension_applied and _install_trap()
-	var success := extension_applied and trap_applied
+	last_extension_applied = track_manager.apply_extension(_extension_choice)
+	last_trap_applied = last_extension_applied and _install_trap()
+	var success := last_extension_applied and last_trap_applied
 	build_applied.emit(success)
 	return success
+
+func reveal_and_apply() -> bool:
+	return reveal_choices() and apply_revealed()
 
 func reset_traps_for_racing() -> void:
 	if track_manager == null:

@@ -8,6 +8,8 @@ const TrapController = preload("res://scripts/traps/trap_controller.gd")
 func run() -> bool:
 	var all_passed := true
 	all_passed = test_roles_alternate_and_choices_stay_secret_until_reveal() and all_passed
+	all_passed = test_reveal_stays_durable_until_explicit_apply() and all_passed
+	all_passed = test_extension_and_trap_application_results_are_reported_separately() and all_passed
 	all_passed = test_modifier_rejects_invalid_future_and_duplicate_slots() and all_passed
 	all_passed = test_reveal_uses_first_still_unoccupied_priority_slot() and all_passed
 	all_passed = test_reveal_reports_failure_when_every_priority_became_occupied() and all_passed
@@ -17,6 +19,67 @@ func run() -> bool:
 	all_passed = test_dynamite_triggers_once_and_build_manager_rearms_it() and all_passed
 	all_passed = test_empty_option_snapshot_emits_track_build_blocked() and all_passed
 	return all_passed
+
+func test_reveal_stays_durable_until_explicit_apply() -> bool:
+	var fixture := _create_fixture()
+	var manager = fixture["build_manager"]
+	var state = fixture["race_state"]
+	var track = fixture["track_manager"]
+	var revealed: Array = []
+	manager.choices_revealed.connect(func(extension_id: String, trap_id: String) -> void: revealed.append([extension_id, trap_id]))
+	manager.begin_secret_phase(1)
+	manager.submit_extension(1, "straight")
+	manager.submit_modification(2, "ice", _initial_slot_ids())
+	var reveal_ok: bool = manager.reveal_choices()
+	var durable_reveal := (
+		_expect(reveal_ok and state.phase == RaceState.Phase.REVEAL, "Locked choices must enter and remain in REVEAL before application.")
+		and _expect(track.layout.pieces.size() == 1 and _slot(track, "piece_0_slot_0").get_child_count() == 0, "REVEAL must not mutate track geometry or trap slots.")
+		and _expect(revealed == [["straight", "ice"]], "REVEAL must expose both choices exactly once.")
+		and _expect(not manager.reveal_choices(), "A durable reveal cannot be emitted twice.")
+	)
+	var apply_ok: bool = manager.apply_revealed()
+	var applied := (
+		_expect(apply_ok and state.phase == RaceState.Phase.APPLY_BUILD, "Explicit apply must advance REVEAL into APPLY_BUILD.")
+		and _expect(manager.last_extension_applied and manager.last_trap_applied, "A complete build must report both application results.")
+		and _expect(track.layout.pieces.size() == 2 and _slot(track, "piece_0_slot_0").get_child_count() == 1, "Explicit apply must mutate the real track once.")
+		and _expect(not manager.apply_revealed(), "An already-applied reveal cannot be applied twice.")
+	)
+	_free_fixture(fixture)
+	return durable_reveal and applied
+
+func test_extension_and_trap_application_results_are_reported_separately() -> bool:
+	var trap_fixture := _create_fixture()
+	var trap_manager = trap_fixture["build_manager"]
+	var trap_track = trap_fixture["track_manager"]
+	trap_manager.begin_secret_phase(1)
+	trap_manager.submit_extension(1, "straight")
+	trap_manager.submit_modification(2, "ice", _initial_slot_ids())
+	trap_manager.reveal_choices()
+	for slot_id in _initial_slot_ids():
+		trap_track.occupy_trap_slot(slot_id, TrapController.new("dynamite"))
+	var partial_ok: bool = not trap_manager.apply_revealed()
+	var partial_reported := (
+		_expect(partial_ok, "A missing trap priority must still report overall application failure.")
+		and _expect(trap_manager.last_extension_applied and not trap_manager.last_trap_applied, "Partial application must distinguish the kept extension from the failed trap.")
+	)
+	_free_fixture(trap_fixture)
+
+	var extension_fixture := _create_fixture()
+	var extension_manager = extension_fixture["build_manager"]
+	var extension_track = extension_fixture["track_manager"]
+	extension_manager.begin_secret_phase(1)
+	extension_manager.submit_extension(1, "straight")
+	extension_manager.submit_modification(2, "ice", _initial_slot_ids())
+	extension_manager.reveal_choices()
+	var competing_option = extension_track.layout.get_valid_options()[0]
+	extension_track.apply_extension(competing_option)
+	var extension_ok: bool = not extension_manager.apply_revealed()
+	var extension_reported := (
+		_expect(extension_ok, "A stale revealed extension must fail through the normal apply API.")
+		and _expect(not extension_manager.last_extension_applied and not extension_manager.last_trap_applied, "Trap installation must not run when extension application fails.")
+	)
+	_free_fixture(extension_fixture)
+	return partial_reported and extension_reported
 
 func test_roles_alternate_and_choices_stay_secret_until_reveal() -> bool:
 	var odd_fixture := _create_fixture()

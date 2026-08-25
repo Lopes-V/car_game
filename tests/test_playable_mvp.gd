@@ -13,6 +13,12 @@ func run() -> bool:
 	all_passed = await test_all_eliminated_ends_race_without_waiting_for_deadline() and all_passed
 	all_passed = await test_hud_defaults_to_three_distinct_slot_priorities() and all_passed
 	all_passed = await test_ice_effect_does_not_leak_into_next_round() and all_passed
+	all_passed = await test_partial_trap_failure_keeps_extension_and_counts_down() and all_passed
+	all_passed = await test_extension_apply_failure_ends_in_controlled_result() and all_passed
+	all_passed = await test_composed_match_reaches_target_score_match_end() and all_passed
+	all_passed = await test_composed_match_reaches_fifth_round_match_end() and all_passed
+	all_passed = await test_initial_track_build_blocked_result_is_not_overwritten() and all_passed
+	all_passed = await test_composed_finish_and_trap_receive_real_body_entered() and all_passed
 	return all_passed
 
 func test_main_scene_boots_real_secret_build_flow() -> bool:
@@ -55,8 +61,15 @@ func test_real_ui_builds_counts_down_scores_and_alternates_roles() -> bool:
 	slot_two.select(1)
 	slot_three.select(2)
 	lock_button.pressed.emit()
+	var reveal_panel: Control = hud.get_node("Overlay/RevealPanel")
+	var reveal_passed := (
+		_expect(game.race_state.phase == RaceState.Phase.REVEAL, "The second secret lock must stop in durable REVEAL.")
+		and _expect(reveal_panel.visible and not hud.get_node("Overlay/RevealPanel/VBox/RevealButton").disabled, "The revealed choices and explicit apply action must stay visible.")
+		and _expect(track.layout.pieces.size() == 1 and _installed_trap_count(track) == 0, "No physical build may occur before explicit apply.")
+	)
+	hud.get_node("Overlay/RevealPanel/VBox/RevealButton").pressed.emit()
 	var build_passed := (
-		_expect(game.race_state.phase == RaceState.Phase.COUNTDOWN, "Two real locked UI choices must apply and enter COUNTDOWN.")
+		_expect(game.race_state.phase == RaceState.Phase.COUNTDOWN, "Explicit reveal apply must enter COUNTDOWN.")
 		and _expect(track.layout.pieces.size() == 2, "The first UI build must append exactly one canonical extension.")
 		and _expect(not track.finish.global_transform.is_equal_approx(original_finish), "Applying the UI extension must move the persistent finish.")
 		and _expect(_installed_trap_count(track) == 1, "The modifier UI must install one trap in a phase-start slot.")
@@ -67,8 +80,7 @@ func test_real_ui_builds_counts_down_scores_and_alternates_roles() -> bool:
 		and _expect(main.get_node("Player1").controls_enabled and main.get_node("Player2").controls_enabled, "Both live cars must receive controls in RACING.")
 		and _expect(game.player_states[1].boost_charges == 1 and game.player_states[2].boost_charges == 1, "Each player must begin the race with one boost charge.")
 	)
-	game.race_state.phase = RaceState.Phase.RESULTS
-	game.finish_round()
+	game.update_race(game.race_state.race_end_time)
 	var results_panel: Control = hud.get_node("Overlay/ResultsPanel")
 	var results_passed := _expect(results_panel.visible, "Finishing through the public orchestration API must display round results.")
 	var continue_button: Button = hud.get_node("Overlay/ResultsPanel/VBox/ContinueButton")
@@ -80,7 +92,7 @@ func test_real_ui_builds_counts_down_scores_and_alternates_roles() -> bool:
 		and _expect(game.player_states[1].boost_charges == 1 and game.player_states[2].boost_charges == 1, "Continue must restore exactly one boost per player.")
 	)
 	await _free_main(fixture)
-	return build_passed and racing_passed and results_passed and next_round_passed
+	return reveal_passed and build_passed and racing_passed and results_passed and next_round_passed
 
 func _instantiate_main() -> Dictionary:
 	var packed := load("res://scenes/main/main.tscn") as PackedScene
@@ -178,6 +190,11 @@ func test_runtime_progress_samples_current_piece_path() -> bool:
 func _lock_first_build(main: Node, trap_id: String) -> void:
 	var hud = main.get_node("HUD")
 	var lock_button: Button = hud.get_node("Overlay/BuildPanel/VBox/LockButton")
+	var extension_select: OptionButton = hud.get_node("Overlay/BuildPanel/VBox/ExtensionSelect")
+	for item_index in extension_select.item_count:
+		if extension_select.get_item_text(item_index) == "straight":
+			extension_select.select(item_index)
+			break
 	lock_button.pressed.emit()
 	var trap_select: OptionButton = hud.get_node("Overlay/BuildPanel/VBox/TrapSelect")
 	trap_select.select(1 if trap_id == "dynamite" else 0)
@@ -185,6 +202,7 @@ func _lock_first_build(main: Node, trap_id: String) -> void:
 	hud.get_node("Overlay/BuildPanel/VBox/SlotTwo").select(1)
 	hud.get_node("Overlay/BuildPanel/VBox/SlotThree").select(2)
 	lock_button.pressed.emit()
+	hud.get_node("Overlay/RevealPanel/VBox/RevealButton").pressed.emit()
 
 func _first_installed_trap(track):
 	for slot in track.get_existing_trap_slots():
@@ -265,13 +283,167 @@ func test_ice_effect_does_not_leak_into_next_round() -> bool:
 	var car = main.get_node("Player1")
 	var trap = _first_installed_trap(main.get_node("TrackManager"))
 	var triggered: bool = trap.handle_body_crossing(car)
-	game.race_state.phase = RaceState.Phase.RESULTS
-	game.finish_round()
+	game.update_race(game.race_state.race_end_time)
 	main.get_node("HUD/Overlay/ResultsPanel/VBox/ContinueButton").pressed.emit()
 	var passed := (
 		_expect(triggered, "The real ice trap must trigger for a configured car during RACING.")
 		and _expect(game.player_states[1].lives == 3, "Ice must never consume a life.")
 		and _expect(is_zero_approx(car.low_grip_time_remaining), "A new round must clear the previous race's temporary low-grip effect.")
+	)
+	await _free_main(fixture)
+	return passed
+
+func test_partial_trap_failure_keeps_extension_and_counts_down() -> bool:
+	var fixture := await _instantiate_main()
+	var main = fixture["main"]
+	var game = main.get_node("GameController")
+	var track = main.get_node("TrackManager")
+	var hud = main.get_node("HUD")
+	var lock_button: Button = hud.get_node("Overlay/BuildPanel/VBox/LockButton")
+	lock_button.pressed.emit()
+	lock_button.pressed.emit()
+	for slot_id in ["piece_0_slot_0", "piece_0_slot_1", "piece_0_slot_2"]:
+		track.occupy_trap_slot(slot_id, (load("res://scenes/traps/dynamite.tscn") as PackedScene).instantiate())
+	hud.get_node("Overlay/RevealPanel/VBox/RevealButton").pressed.emit()
+	var passed := (
+		_expect(game.race_state.phase == RaceState.Phase.COUNTDOWN, "A kept extension with failed modification must continue into COUNTDOWN.")
+		and _expect(game.build_manager.last_extension_applied and not game.build_manager.last_trap_applied, "Runtime orchestration must preserve separate partial-application results.")
+		and _expect(track.layout.pieces.size() == 2, "A modification failure must not roll back the valid extension.")
+		and _expect("MODIFICATION_FAILED" in hud.get_node("Overlay/PhaseLabel").text, "The HUD must report the failed modification during countdown.")
+	)
+	await _free_main(fixture)
+	return passed
+
+func test_extension_apply_failure_ends_in_controlled_result() -> bool:
+	var fixture := await _instantiate_main()
+	var main = fixture["main"]
+	var game = main.get_node("GameController")
+	var track = main.get_node("TrackManager")
+	var hud = main.get_node("HUD")
+	var lock_button: Button = hud.get_node("Overlay/BuildPanel/VBox/LockButton")
+	lock_button.pressed.emit()
+	lock_button.pressed.emit()
+	track.apply_extension(track.layout.get_valid_options()[0])
+	hud.get_node("Overlay/RevealPanel/VBox/RevealButton").pressed.emit()
+	var passed := (
+		_expect(game.race_state.phase == RaceState.Phase.MATCH_END and game.end_reason == "TRACK_BUILD_BLOCKED", "An invalidated revealed extension must end through the controlled build-failure path.")
+		and _expect(hud.get_node("Overlay/ResultsPanel").visible and not hud.get_node("Overlay/BuildPanel").visible, "Controlled extension failure must show results without deadlocking APPLY_BUILD.")
+	)
+	await _free_main(fixture)
+	return passed
+
+func test_composed_match_reaches_target_score_match_end() -> bool:
+	var fixture := await _instantiate_main()
+	var main = fixture["main"]
+	var game = main.get_node("GameController")
+	for round_number in range(1, 5):
+		_lock_first_build(main, "ice")
+		game.start_racing(Time.get_ticks_msec() / 1000.0)
+		var finish_gate = main.get_node("TrackManager").finish.get_node("FinishGate")
+		var car = main.get_node("Player1")
+		car.velocity = finish_gate.global_basis * Vector3.FORWARD * 10.0
+		finish_gate.handle_body_crossing(car)
+		game.update_race(game.race_state.race_end_time)
+		if round_number < 4:
+			main.get_node("HUD/Overlay/ResultsPanel/VBox/ContinueButton").pressed.emit()
+	var passed := (
+		_expect(game.race_state.phase == RaceState.Phase.MATCH_END and game.end_reason == "TARGET_SCORE", "Four composed winning rounds must reach target-score MATCH_END through real finish-window deadlines.")
+		and _expect(game.winner_id == 1 and int(game.total_scores[1]) >= 20, "Target-score match end must retain the highest awarded total and winner.")
+		and _expect(main.get_node("HUD/Overlay/PhaseLabel").text == "MATCH_END - TARGET_SCORE", "The HUD phase label must expose the terminal target-score state.")
+		and _expect("TARGET_SCORE" in main.get_node("HUD/Overlay/ResultsPanel/VBox/ResultsLabel").text, "The result panel must visibly expose the target-score reason.")
+	)
+	await _free_main(fixture)
+	return passed
+
+func test_composed_match_reaches_fifth_round_match_end() -> bool:
+	var fixture := await _instantiate_main()
+	var main = fixture["main"]
+	var game = main.get_node("GameController")
+	for round_number in range(1, 6):
+		_lock_first_build(main, "ice")
+		game.start_racing(Time.get_ticks_msec() / 1000.0)
+		main.get_node("Player1").global_position.y = -25.0
+		main.get_node("Player2").global_position.y = -25.0
+		await fixture["tree"].process_frame
+		var finisher_id := 1 if round_number % 2 == 1 else 2
+		var finish_gate = main.get_node("TrackManager").finish.get_node("FinishGate")
+		var car = main.get_node("Player%d" % finisher_id)
+		car.velocity = finish_gate.global_basis * Vector3.FORWARD * 10.0
+		finish_gate.handle_body_crossing(car)
+		game.update_race(game.race_state.race_end_time)
+		if round_number < 5:
+			main.get_node("HUD/Overlay/ResultsPanel/VBox/ContinueButton").pressed.emit()
+	var passed := (
+		_expect(game.race_state.phase == RaceState.Phase.MATCH_END and game.end_reason == "MAX_ROUNDS", "A below-target composed match must end after the fifth scored round.")
+		and _expect(game.winner_id == 1 and int(game.total_scores[1]) < 20 and int(game.total_scores[2]) < 20, "Fifth-round termination must resolve the higher below-target total.")
+		and _expect(main.get_node("HUD/Overlay/PhaseLabel").text == "MATCH_END - MAX_ROUNDS", "The HUD phase label must expose the five-round terminal reason.")
+	)
+	await _free_main(fixture)
+	return passed
+
+func test_initial_track_build_blocked_result_is_not_overwritten() -> bool:
+	var packed := load("res://scenes/main/main.tscn") as PackedScene
+	var main = packed.instantiate()
+	var game = main.get_node("GameController")
+	game.owner = null
+	main.remove_child(game)
+	var tree := Engine.get_main_loop() as SceneTree
+	tree.root.add_child(main)
+	await tree.process_frame
+	var track = main.get_node("TrackManager")
+	track.create_initial_track()
+	for _index in 3:
+		var left_options = track.layout.get_valid_options().filter(func(option): return option.variant_id == "curve_left")
+		track.apply_extension(left_options[0])
+	main.add_child(game)
+	await tree.process_frame
+	var passed := (
+		_expect(game.race_state.phase == RaceState.Phase.MATCH_END and game.end_reason == "TRACK_BUILD_BLOCKED", "An initially blocked real track must terminate during scene boot.")
+		and _expect(main.get_node("HUD/Overlay/ResultsPanel").visible and not main.get_node("HUD/Overlay/BuildPanel").visible, "Boot orchestration must not overwrite TRACK_BUILD_BLOCKED results with build UI.")
+		and _expect(main.get_node("HUD/Overlay/PhaseLabel").text == "MATCH_END - TRACK_BUILD_BLOCKED", "Blocked boot must remain visible in the HUD phase label.")
+	)
+	main.queue_free()
+	await tree.process_frame
+	return passed
+
+func test_composed_finish_and_trap_receive_real_body_entered() -> bool:
+	var fixture := await _instantiate_main()
+	var main = fixture["main"]
+	var tree: SceneTree = fixture["tree"]
+	var game = main.get_node("GameController")
+	_lock_first_build(main, "ice")
+	game.start_racing(Time.get_ticks_msec() / 1000.0)
+	var trap = _first_installed_trap(main.get_node("TrackManager"))
+	var trap_events: Array[int] = []
+	trap.triggered.connect(func(player_id: int, _trap_type: String) -> void: trap_events.append(player_id))
+	var car_one = main.get_node("Player1")
+	car_one.controls_enabled = false
+	car_one.global_position = trap.global_position + Vector3(0.0, 0.0, 5.0)
+	await tree.physics_frame
+	await tree.process_frame
+	car_one.global_position = trap.global_position - Vector3(0.0, 0.6, 0.0)
+	await tree.physics_frame
+	await tree.process_frame
+	await tree.physics_frame
+	await tree.process_frame
+	var finish_gate = main.get_node("TrackManager").finish.get_node("FinishGate")
+	var finish_events: Array[int] = []
+	finish_gate.crossed.connect(func(player_id: int) -> void: finish_events.append(player_id))
+	var car_two = main.get_node("Player2")
+	car_two.global_transform = finish_gate.global_transform.translated_local(Vector3(0.0, 0.9, 3.0))
+	car_two.velocity = finish_gate.global_basis * Vector3.FORWARD * 12.0
+	await tree.physics_frame
+	await tree.process_frame
+	for _frame_index in 30:
+		await tree.physics_frame
+		await tree.process_frame
+		if game.race_state.finish_times.has(2):
+			break
+	var trap_received: bool = car_one.low_grip_time_remaining > 0.0 and game.player_states[1].lives == 3
+	var finish_received: bool = game.race_state.phase == RaceState.Phase.FINAL_WINDOW and game.race_state.finish_times.has(2)
+	var passed := (
+		_expect(trap_received, "The composed ice Area3D must receive a real physics body_entered event and apply low grip without life loss; overlaps=%s events=%s grip=%s lives=%s." % [trap.get_overlapping_bodies(), trap_events, car_one.low_grip_time_remaining, game.player_states[1].lives])
+		and _expect(finish_received, "The composed finish Area3D must receive a real forward body_entered event and open FINAL_WINDOW; overlaps=%s events=%s velocity=%s local=%s layer=%s mask=%s." % [finish_gate.get_overlapping_bodies(), finish_events, car_two.velocity, finish_gate.to_local(car_two.global_position), car_two.collision_layer, car_two.collision_mask])
 	)
 	await _free_main(fixture)
 	return passed
