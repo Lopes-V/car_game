@@ -102,7 +102,13 @@ func _physics_process(delta: float) -> void:
 	local_velocity = global_transform.basis.inverse() * velocity
 	var current_lateral_damping := lateral_damping * (low_grip_lateral_damping_multiplier if low_grip_time_remaining > 0.0 else 1.0)
 	local_velocity.x = move_toward(local_velocity.x, 0.0, current_lateral_damping * delta)
-	local_velocity.z = -forward_velocity
+	var target_horizontal_speed := absf(forward_velocity)
+	local_velocity.x = clampf(local_velocity.x, -target_horizontal_speed, target_horizontal_speed)
+	var longitudinal_speed := sqrt(maxf(
+		target_horizontal_speed * target_horizontal_speed - local_velocity.x * local_velocity.x,
+		0.0,
+	))
+	local_velocity.z = -signf(forward_velocity) * longitudinal_speed
 	velocity = global_transform.basis * local_velocity
 	if not is_on_floor():
 		velocity.y -= float(ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)) * delta

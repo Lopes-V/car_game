@@ -25,6 +25,7 @@ func run() -> bool:
 	all_passed = test_invalid_control_state_clears_active_boost() and all_passed
 	all_passed = test_controller_round_reset_clears_runtime_and_domain_state() and all_passed
 	all_passed = test_active_boost_increases_and_preserves_coasting_speed() and all_passed
+	all_passed = test_steering_does_not_create_horizontal_speed() and all_passed
 	all_passed = test_ice_creates_greater_velocity_heading_misalignment_without_life_loss() and all_passed
 	all_passed = test_shared_car_scene_has_body_collision_and_player_color() and all_passed
 	all_passed = test_split_screen_binds_two_targets_to_shared_world_viewports() and all_passed
@@ -874,6 +875,54 @@ func test_active_boost_increases_and_preserves_coasting_speed() -> bool:
 		and _expect(stayed_boosted_and_capped, "Boost must preserve stronger forward motion for two seconds without exceeding its 1.6x cap.")
 		and _expect(full_duration_elapsed and normal_coasting_resumed, "Normal coasting deceleration must resume after the two-second boost expires.")
 	)
+
+func test_steering_does_not_create_horizontal_speed() -> bool:
+	var normal_powered := _steering_speed_sample(false, true, 28.0)
+	var ice_powered := _steering_speed_sample(true, true, 28.0)
+	var normal_coasting := _steering_speed_sample(false, false, 12.0)
+	var ice_coasting := _steering_speed_sample(true, false, 12.0)
+	return (
+		_expect(
+			normal_powered["max_speed"] <= 28.001 and ice_powered["max_speed"] <= 28.001,
+			"Steering without boost must not exceed the literal 28 m/s motor cap; normal=%.6f ice=%.6f."
+			% [normal_powered["max_speed"], ice_powered["max_speed"]],
+		)
+		and _expect(
+			not normal_coasting["speed_increased"] and not ice_coasting["speed_increased"],
+			"Steering while coasting must never create horizontal speed; normal=%s ice=%s."
+			% [normal_coasting["speeds"], ice_coasting["speeds"]],
+		)
+	)
+
+func _steering_speed_sample(low_grip: bool, accelerating: bool, initial_speed: float) -> Dictionary:
+	var fixture := _create_car_fixture(1, "p1")
+	var car = fixture["car"]
+	car.velocity = Vector3(0.0, 0.0, -initial_speed)
+	if low_grip:
+		car.apply_low_grip()
+	Input.action_press("p1_right")
+	if accelerating:
+		Input.action_press("p1_accelerate")
+	var previous_speed := initial_speed
+	var max_speed := initial_speed
+	var speed_increased := false
+	var speeds: Array[float] = []
+	for _step in 4:
+		car._physics_process(0.1)
+		var current_speed := Vector2(car.velocity.x, car.velocity.z).length()
+		speeds.append(current_speed)
+		max_speed = maxf(max_speed, current_speed)
+		if not accelerating and current_speed > previous_speed + 0.0001:
+			speed_increased = true
+		previous_speed = current_speed
+	Input.action_release("p1_right")
+	Input.action_release("p1_accelerate")
+	_free_fixture(fixture)
+	return {
+		"max_speed": max_speed,
+		"speed_increased": speed_increased,
+		"speeds": speeds,
+	}
 
 func test_ice_creates_greater_velocity_heading_misalignment_without_life_loss() -> bool:
 	var normal := _steering_trajectory_sample(false)
